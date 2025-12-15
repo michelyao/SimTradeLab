@@ -441,6 +441,10 @@ class BacktestEngine:
         if hasattr(self.strategy, 'handle_data'):
             self.strategy.handle_data(self.context, self.current_data)
 
+        if hasattr(self.strategy, 'interval_handle'):
+            self.strategy.interval_handle(self.context)
+
+
         if hasattr(self.strategy, 'after_trading_end'):
             log.current_dt = self.context.current_dt.replace(hour=15, minute=30)
             self.strategy.after_trading_end(self.context, self.current_data)

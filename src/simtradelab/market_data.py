@@ -750,6 +750,29 @@ def get_snapshot(engine: 'BacktestEngine', stock: str) -> Dict[str, Any]:
     Returns:
         dict: 快照数据
     """
+    trade_data = {'offer_grp': {1: [44.47, 3300, 0, {}], 2: [44.48, 2800, 0],
+                            3: [44.49, 3900, 0], 4: [44.5, 17300, 0],
+                            5: [44.51, 1600, 0]}, 'open_px': 44.91,
+              'pe_rate': 4294573.83, 'pb_rate': 11.42, 'entrust_diff': -100.0,
+              'entrust_rate': -0.2092, 'total_bidqty': 18900,
+              'preclose_px': 45.2, 'total_offer_turnover': 0, 'issue_date': 0,
+              'business_amount_out': 2600706, 'px_change_rate': -1.62,
+              'turnover_ratio': 0.0042, 'total_bid_turnover': 0,
+              'vol_ratio': 1.12, 'hsTimeStamp': 20220622102358580, 'amount': 0,
+              'prev_settlement': 0.0, 'circulation_amount': 1461560480,
+              'low_px': 44.31, 'down_px': 40.68,
+              'bid_grp': {1: [44.45, 600, 0, {}], 2: [44.44, 600, 0],
+                          3: [44.43, 8300, 0], 4: [44.42, 9200, 0],
+                          5: [44.41, 200, 0]}, 'business_balance': 274847503.0,
+              'business_amount': 6161800, 'business_amount_in': 3561094,
+              'last_px': 44.47, 'total_offerqty': 28900, 'up_px': 49.72,
+              'wavg_px': 44.6, 'high_px': 45.05, 'trade_status': 'TRADE'}
+
+    if isinstance(stock, Dict):
+        return {item: trade_data for item in stock}
+    else:
+        return {stock: trade_data}
+
     if stock in engine.data:
         latest_data = engine.data[stock].iloc[-1]
         snapshot = {

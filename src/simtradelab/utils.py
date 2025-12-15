@@ -1148,6 +1148,12 @@ def check_limit(engine, security):
                 'pct_change': float        # 涨跌幅
             }
     """
+    # george check
+    if isinstance(security, dict):
+        return {item: random.choice([1, 2]) for item in security}
+    else:
+        return {security: 2}
+
     try:
         # 获取当前数据
         if hasattr(engine, 'current_data'):
