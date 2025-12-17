@@ -59,7 +59,7 @@ def unzip_file():
     zip_name = "top_three.zip"
     stock_list = unzip_stock_list_from_data(target_dir, zip_name)
     log.info(
-        "line:{} unzip {} result, stock_list count: {}".format(61, zip_name,
+        "[now] line:{} unzip {} result, stock_list count: {}".format(61, zip_name,
                                                                len(stock_list) if hasattr(
                                                                    stock_list,
                                                                    '__len__') else '?'))
@@ -73,6 +73,12 @@ def set_params():
     g.amount = 100
     g.limit_stock = 0
     g.fund_list = unzip_file()
+    result = []
+    for k,v in g.fund_list.items():
+       result.extend(v)
+    # 将g.security中的股票设置为股票池
+    g.security = result
+    set_universe(g.security)
 
 
 def set_variables():

@@ -58,7 +58,7 @@ def unzip_file():
 
     stock_len = len(stock_list) if hasattr(stock_list, '__len__') else '?'
     log.info(
-        "line:{} result, stock_list count: {}".format(61, stock_len))
+        "[new] line:{} result, stock_list count: {}".format(61, stock_len))
     return stock_list
 
 
@@ -153,6 +153,3 @@ def interval_handle(context):
             log.debug("line:{} get_snapshot failed for {} "
                       "{}".format(153, e, traceback.format_exc()))
     log.info("line:{} interval_handle end".format(155))
-
-
-
