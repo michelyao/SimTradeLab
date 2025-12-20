@@ -767,11 +767,12 @@ def get_snapshot(engine: 'BacktestEngine', stock: str) -> Dict[str, Any]:
               'business_amount': 6161800, 'business_amount_in': 3561094,
               'last_px': 44.47, 'total_offerqty': 28900, 'up_px': 49.72,
               'wavg_px': 44.6, 'high_px': 45.05, 'trade_status': 'TRADE'}
+    trade_data_mint_fact = {'entrust_rate': -0.5328, 'wavg_px': 29.12, 'contract_unit': 0, 'trade_status': 'TRADE', 'high_px': 29.12, 'business_amount_out': 52000, 'close_px': 0.0, 'business_amount_in': 0, 'entrust_diff': -130.0, 'exercise_type': '', 'prev_settlement': 0.0, 'total_bid_turnover': 0, 'contract_code': '', 'last_px': 29.12, 'up_px': 31.92, 'bid_grp': {1: [29.1, 2500, 0, {}], 2: [29.07, 2000, 0], 3: [29.06, 600, 0], 4: [29.05, 200, 0], 5: [29.03, 400, 0]}, 'low_px': 29.12, 'preclose_px': 29.02, 'call_put': '', 'pb_rate': 6.11, 'end_trade_date': 0, 'amount': 0, 'trade_mins': 0, 'px_change_rate': 0.34, 'exercise_date': 0, 'current_amount': 52000, 'tick_size': 0.0, 'security_status_flag': 0, 'pe_rate': 90.89, 'business_count': 113, 'business_balance': 1514240.0, 'total_offerqty': 18700, 'business_balance_scale': 1514240000, 'turnover_ratio': 0.0, 'offer_grp': {1: [29.12, 14300, 0, {}], 2: [29.13, 300, 0], 3: [29.14, 500, 0], 4: [29.15, 2600, 0], 5: [29.16, 1000, 0]}, 'business_amount': 52000, 'total_bidqty': 5700, 'avg_px': 0.0, 'issue_date': 0, 'vol_ratio': 0.489, 'hsTimeStamp': 20251219092850606, 'start_trade_date': 0, 'down_px': 26.12, 'circulation_amount': 1894130907, 'open_px': 29.12, 'type_flag': 0, 'settlement': 0.0, 'exercise_price': 0.0, 'expire_date': 0, 'total_offer_turnover': 0}
 
-    if isinstance(stock, Dict):
-        return {item: trade_data for item in stock}
+    if isinstance(stock, list):
+        return {item: trade_data_mint_fact for item in stock}
     else:
-        return {stock: trade_data}
+        return {stock: trade_data_mint_fact}
 
     if stock in engine.data:
         latest_data = engine.data[stock].iloc[-1]

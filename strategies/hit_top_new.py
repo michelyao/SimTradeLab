@@ -45,7 +45,7 @@ def initialize(context):
     g.signal = 0
     g.hit_status = [1, 2]
     is_trade_flag = is_trade()
-    run_interval(context, interval_handle, seconds=1)
+    # run_interval(context, interval_handle, seconds=1)
     if not is_trade_flag:
         set_backtest()  # 设置回测条件
 
@@ -69,6 +69,9 @@ def set_params():
     g.amount = 100
     g.limit_stock = 0
     g.fund_list = unzip_file()
+    g.security = sum(g.fund_list.values(), []) if g.fund_list else []
+    set_universe(g.security)
+
 
 
 def set_variables():
@@ -99,8 +102,8 @@ def before_trading_start(context, data):
 
 
 
-# def handle_data(context, data):
-def interval_handle(context):
+def handle_data(context, data):
+# def interval_handle(context):
     """
     核心轮询主流程。遍历股票池，检测涨停条件，并触发下单。
     """

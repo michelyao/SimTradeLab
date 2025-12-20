@@ -1149,7 +1149,7 @@ def check_limit(engine, security):
             }
     """
     # george check
-    if isinstance(security, dict):
+    if isinstance(security, list):
         return {item: random.choice([1, 2]) for item in security}
     else:
         return {security: 2}

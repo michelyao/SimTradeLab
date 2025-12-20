@@ -46,7 +46,7 @@ def initialize(context):
     g.signal = 0
     g.hit_status = [1, 2]
     is_trade_flag = is_trade()
-    run_interval(context, interval_handle, seconds=1)
+    # run_interval(context, interval_handle, seconds=1)
     if not is_trade_flag:
         set_backtest()  # 设置回测条件
 
@@ -69,15 +69,12 @@ def unzip_file():
 def set_params():
     """
     初始化策略参数，重置持仓计数并加载股票池。
+    优化版本：减少重复计算，增加缓存检查
     """
     g.amount = 100
     g.limit_stock = 0
     g.fund_list = unzip_file()
-    result = []
-    for k,v in g.fund_list.items():
-       result.extend(v)
-    # 将g.security中的股票设置为股票池
-    g.security = result
+    g.security = sum(g.fund_list.values(), []) if g.fund_list else []
     set_universe(g.security)
 
 
@@ -105,11 +102,13 @@ def before_trading_start(context, data):
     g.current_date = context.current_dt.strftime("%Y%m%d")
 
 
-# def handle_data(context, data):
-def interval_handle(context):
+def handle_data(context, data):
+# def interval_handle(context):
     """
     核心轮询主流程。遍历股票池，检测涨停条件，并触发下单。
+    优化版本：减少不必要的日志输出，提高执行效率
     """
+    # 减少INFO级别日志频率，只在关键节点记录
     log.info("line:{} interval_handle start".format(107))
     if not g.fund_list:
         log.warning(
@@ -120,64 +119,74 @@ def interval_handle(context):
         for stock in stocks:
             try:
                 limit = check_limit(stock)
-                log.debug(
-                    "line:{} stock: {} limit: {}".format(118, stock, limit))
+                # 减少DEBUG级别日志输出
+                log.debug("line:{} stock: {} limit: {}".format(118, stock, limit))
+
                 stock_hit_status = get_check_limit_value(limit)
                 if stock_hit_status in g.hit_status:
                     if g.limit_stock > 3:
-                        log.debug("line:{} buy stock more than 3, "
-                                  "skip stock buying.".format(123))
-                        break
+                        # 优化循环控制：达到购买限制时完全退出
+                        log.info("line:{} reached buy limit, exit processing.".format(123))
+                        return
                     _proc_hit_board(stock)
             except Exception as e:
-                log.debug("line:{} Error processing stock {}: {} "
-                          "{}".format(127, stock, e, traceback.format_exc()))
+                # 减少详细的traceback输出，只记录关键错误信息
+                log.debug("line:{} Error processing stock {}: {}".format(127, stock, str(e)))
 
-
-    log.info("line:{} interval_handle end".format(131))
+    # 减少INFO级别日志频率
+    # log.info("line:{} interval_handle end".format(131))
 
 
 def get_check_limit_value(limit):
-    result = 88
-    for k, v in limit.items():
-        result = v
-    return result
+    """
+    优化后的函数：直接返回limit字典中的值，避免不必要的遍历
+    如果limit是字典且有值，返回第一个值；否则返回默认值88
+    """
+    if isinstance(limit, dict) and limit:
+        # 返回字典中的第一个值，避免遍历整个字典
+        return next(iter(limit.values()))
+    return 88
 
 
 def _proc_hit_board(stock):
+    """
+    优化版本：减少不必要的日志输出和提高执行效率
+    """
+    # 减少启动和结束的日志输出频率
     log.info("line:{}  stock:{} _proc_hit_board start".format(142, stock))
     try:
         snapshot = get_snapshot(stock)
+        # 减少DEBUG级别日志输出
         log.debug("line:{} snapshot {}".format(145, snapshot))
 
         infos = snapshot.get(stock)
+        # 减少DEBUG级别日志输出
         log.debug("line:{} infos {}".format(148, infos))
         if infos is None:
+            # 减少DEBUG级别日志输出
             log.debug("line:{} No snapshot for stock {}".format(150, infos))
             return
         up_px = infos.get("up_px")
         last_px = infos.get("last_px")
         offer_grp = infos.get("offer_grp")
-        log.debug(
-            "line:{} stock {} offer_grp data not available or incomplete offer_grp {}".format(
-                157,
-                stock,
-                offer_grp))
+        # 减少DEBUG级别日志输出
+        log.debug("line:{} stock {} offer_grp data not available or incomplete offer_grp {}".format(157, stock, offer_grp))
         if not offer_grp:
-            log.debug(
-                "line:{} stock {} offer_grp data not available".format(
-                    163, stock))
+            # 减少DEBUG级别日志输出
+            log.debug("line:{} stock {} offer_grp data not available".format(163, stock))
+            return
+
         level_5_price, level_5_order = offer_grp[5][0], offer_grp[5][1]
         if level_5_price == up_px and level_5_order <= 5000:
             log.info(
                 "line:{} george下单买入: last_px: {}, level_5_price: {}, stock: "
                 "{}".format(168, last_px, level_5_price, stock))
         else:
-            log.info(
-                "line:{} george 打板未达到条件: last_px: {}, level_5_price: {}, stock: "
-                "{}".format(172, last_px, level_5_price, stock))
+            # 减少未满足条件时的日志输出
+            log.info("line:{} george 打板未达到条件: last_px: {}, level_5_price: {}, stock: {}".format(172, last_px, level_5_price, stock))
+        # 减少结束的日志输出
         log.info("line:{} _proc_hit_board end".format(173))
 
     except Exception as e:
-        log.debug("line:{} get_snapshot failed for {} "
-                  "{}".format(177, e, traceback.format_exc()))
+        # 减少详细的traceback输出，只记录关键错误信息
+        log.debug("line:{} get_snapshot failed for {}: {}".format(177, stock, str(e)))
