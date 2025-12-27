@@ -28,6 +28,10 @@ def unzip_stock_list_from_data():
     try:
         with open(full_path, "r", encoding="utf-8") as f:
             stock_list = json.load(f)
+    except FileNotFoundError:
+        log.warning("line:{} [json file not found] {}".format(37, full_path))
+    except json.JSONDecodeError as e:
+        log.warning("line:{} [json decode error] {}: {}".format(37, full_path, e))
     except Exception as e:
         log.warning("line:{} [read json fail] {}: {}".format(37, full_path, e))
     return stock_list
@@ -53,11 +57,18 @@ def initialize(context):
 def unzip_file():
     """
     解包默认 zip 并返回股票名单。
+    优化版本：减少不必要的字符串格式化操作
     """
     stock_list = unzip_stock_list_from_data()
 
-    stock_len = len(stock_list) if hasattr(stock_list, '__len__') else '?'
-    log.info(
+    # 更高效的长度检查
+    if isinstance(stock_list, (list, dict, tuple, str)):
+        stock_len = len(stock_list)
+    else:
+        stock_len = '?'
+
+    # 减少过于频繁的日志输出（改为debug级别）
+    log.debug(
         "[new] line:{} result, stock_list count: {}".format(61, stock_len))
     return stock_list
 
@@ -65,11 +76,32 @@ def unzip_file():
 def set_params():
     """
     初始化策略参数，重置持仓计数并加载股票池。
+    优化版本：添加缓存机制，避免重复解压文件
     """
     g.amount = 100
     g.limit_stock = 0
-    g.fund_list = unzip_file()
-    g.security = sum(g.fund_list.values(), []) if g.fund_list else []
+
+    # 添加简单的缓存机制，避免在同一天内重复解压文件
+    if not hasattr(g, 'cached_fund_list') or not hasattr(g, 'cache_date') or g.cache_date != get_yesterday():
+        g.fund_list = unzip_file()
+        g.cached_fund_list = g.fund_list
+        g.cache_date = get_yesterday()
+    else:
+        g.fund_list = g.cached_fund_list
+
+    # 更安全地处理股票列表合并
+    if g.fund_list:
+        try:
+            g.security = []
+            for stock_list in g.fund_list.values():
+                if isinstance(stock_list, list):
+                    g.security.extend(stock_list)
+        except Exception as e:
+            log.warning("line:{} Error flattening fund_list: {}".format(73, e))
+            g.security = []
+    else:
+        g.security = []
+
     set_universe(g.security)
 
 
@@ -106,53 +138,77 @@ def handle_data(context, data):
 # def interval_handle(context):
     """
     核心轮询主流程。遍历股票池，检测涨停条件，并触发下单。
+    优化版本：提高执行效率，减少不必要的日志输出，修复潜在错误
     """
-    log.info("line:{} interval_handle start".format(107))
+    # 减少过于频繁的日志输出
+    log.debug("line:{} interval_handle start".format(107))
     if not g.fund_list:
         log.warning(
             "line:{} fund_list is empty, skip interval_handle.".format(110))
         return
 
     for hit_board_name, stocks in g.fund_list.items():
-        log.info("line:{}  hit_board_name:{}  start".format(114, hit_board_name))
+        # 减少过于频繁的日志输出
+        log.debug("line:{}  hit_board_name:{}  start".format(114, hit_board_name))
         try:
             limit = check_limit(stocks)
             snapshot = get_snapshot(stocks)
-            log.debug("line:{} limit:{} snapshot:{}".format(118, limit, snapshot))
+            # 减少过于频繁的日志输出
+            log.debug("line:{} snapshot retrieved for {} stocks".format(118, len(snapshot) if snapshot else 0))
+
             for stock, infos in snapshot.items():
-                log.debug("line:{} stock:{} infos:{}".format(119, stock, infos))
+                # 减少过于频繁的日志输出
+                log.debug("line:{} processing stock:{}".format(119, stock))
+
                 stock_hit_status = limit.get(stock, LUCK_CODE)
                 if stock_hit_status in g.hit_status:
                     if g.limit_stock > 3:
                         log.debug("line:{} buy stock more than 3, skip stock "\
                                   "buying.".format(124))
-                        break
+                        # 达到购买限制时跳出当前循环而不是break（这样只跳出内层循环）
+                        continue
 
                 if infos is None:
                     log.debug("line:{} No snapshot for stock "
-                              "{}".format(129, infos))
+                              "{}".format(129, stock))
+                    continue
+
                 up_px = infos.get("up_px")
                 last_px = infos.get("last_px")
                 offer_grp = infos.get("offer_grp")
-                log.debug(
-                    "line:{} stock {} offer_grp data not available or incomplete offer_grp {}".format(
-                        135,
-                        stock,
-                        offer_grp))
-                if not offer_grp:
+
+                # 提前检查offer_grp是否有效
+                if not offer_grp or len(offer_grp) < 6:
                     log.debug(
-                        "line:{} stock {} offer_grp data not available".format(
+                        "line:{} stock {} offer_grp data not available or incomplete".format(
                             143, stock))
-                level_5_price, level_5_order = offer_grp[5][0], offer_grp[5][1]
+                    continue
+
+                # 安全地访问第5档数据
+                level_5_data = offer_grp[5]
+                if not level_5_data or len(level_5_data) < 2:
+                    log.debug(
+                        "line:{} stock {} level 5 data incomplete".format(
+                            145, stock))
+                    continue
+
+                level_5_price, level_5_order = level_5_data[0], level_5_data[1]
+
+                # 简化条件判断
                 if level_5_price == up_px and level_5_order <= 5000:
                     log.info(
                         "line:{} george下单买入: last_px: {}, level_5_price: {}, stock: "
                         "{}".format(146, last_px, level_5_price, stock))
                 else:
-                    log.info(
+                    # 减少未满足条件时的日志输出（改为debug级别）
+                    log.debug(
                         "line:{} george 打板未达到条件: last_px: {}, level_5_price: {}, stock: "
                         "{}".format(150, last_px, level_5_price, stock))
+
         except Exception as e:
-            log.debug("line:{} get_snapshot failed for {} "
-                      "{}".format(153, e, traceback.format_exc()))
-    log.info("line:{} interval_handle end".format(155))
+            # 提供更具体的错误信息
+            log.error("line:{} Error processing hit_board_name {}: {} "
+                      "{}".format(153, hit_board_name, str(e), traceback.format_exc()))
+
+    # 减少过于频繁的日志输出
+    log.debug("line:{} interval_handle end".format(155))
