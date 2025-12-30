@@ -4,41 +4,7 @@
 """
 
 import json
-import traceback
-import zipfile
 from datetime import datetime, timedelta
-
-LUCK_CODE = 66
-RICH_CODE = 88
-
-
-def unzip_stock_list_from_data():
-    """
-    解压目标 zip 包并读取近一天的股票模块名单 json，异常时返回空列表。
-    """
-    target_dir = "george/"
-    zip_name = "top_three.zip"
-
-    base_path = get_research_path() + target_dir
-
-    yesterday = get_yesterday()
-    json_file = "{}_top_three_module.json".format(yesterday)
-    full_path = base_path + "input_data/" + json_file
-    stock_list = []
-    try:
-        with open(full_path, "r", encoding="utf-8") as f:
-            stock_list = json.load(f)
-    except FileNotFoundError:
-        log.warning("line:{} [json file not found] {}".format(37, full_path))
-    except json.JSONDecodeError as e:
-        log.warning("line:{} [json decode error] {}: {}".format(37, full_path, e))
-    except Exception as e:
-        log.warning("line:{} [read json fail] {}: {}".format(37, full_path, e))
-    return stock_list
-
-
-def get_yesterday():
-    return (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def initialize(context):
@@ -49,27 +15,29 @@ def initialize(context):
     g.signal = 0
     g.hit_status = [1, 2]
     is_trade_flag = is_trade()
-    # run_interval(context, interval_handle, seconds=1)
+    run_interval(context, interval_handle, seconds=1)
     if not is_trade_flag:
         set_backtest()  # 设置回测条件
 
 
-def unzip_file():
-    """
-    解包默认 zip 并返回股票名单。
-    优化版本：减少不必要的字符串格式化操作
-    """
-    stock_list = unzip_stock_list_from_data()
+def read_stock_pool():
+    george_path = get_research_path() + "george/"
+    print("line:{} {}".format(18, george_path))
+    yesterday_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    json_file = "{}_top_three_module.json".format(yesterday_date)
+    full_path = george_path + "input_data/" + json_file
+    stock_list = []
+    try:
+        with open(full_path, "r", encoding="utf-8") as f:
+            stock_list = json.load(f)
+    except Exception as e:
+        log.warning("line:{} [read json fail] {}: {}"
+                    "".format(37, full_path, e))
 
-    # 更高效的长度检查
-    if isinstance(stock_list, (list, dict, tuple, str)):
-        stock_len = len(stock_list)
-    else:
-        stock_len = '?'
-
-    # 减少过于频繁的日志输出（改为debug级别）
-    log.debug(
-        "[new] line:{} result, stock_list count: {}".format(61, stock_len))
+    log.info(
+        "[now] line:{} full_path:{} result, stock_list count: {}"
+        "".format(61, full_path,
+                  len(stock_list) if hasattr(stock_list, '__len__') else '?'))
     return stock_list
 
 
@@ -82,7 +50,8 @@ def set_params():
     g.limit_stock = 0
 
     # 添加简单的缓存机制，避免在同一天内重复解压文件
-    if not hasattr(g, 'cached_fund_list') or not hasattr(g, 'cache_date') or g.cache_date != get_yesterday():
+    if not hasattr(g, 'cached_fund_list') or not hasattr(g,
+                                                         'cache_date') or g.cache_date != get_yesterday():
         g.fund_list = unzip_file()
         g.cached_fund_list = g.fund_list
         g.cache_date = get_yesterday()
@@ -103,7 +72,6 @@ def set_params():
         g.security = []
 
     set_universe(g.security)
-
 
 
 def set_variables():
@@ -130,12 +98,8 @@ def before_trading_start(context, data):
     g.current_date = context.current_dt.strftime("%Y%m%d")
 
 
-
-
-
-
-def handle_data(context, data):
-# def interval_handle(context):
+# def handle_data(context, data):
+def interval_handle(context):
     """
     核心轮询主流程。遍历股票池，检测涨停条件，并触发下单。
     优化版本：提高执行效率，减少不必要的日志输出，修复潜在错误
@@ -149,12 +113,14 @@ def handle_data(context, data):
 
     for hit_board_name, stocks in g.fund_list.items():
         # 减少过于频繁的日志输出
-        log.debug("line:{}  hit_board_name:{}  start".format(114, hit_board_name))
+        log.debug(
+            "line:{}  hit_board_name:{}  start".format(114, hit_board_name))
         try:
             limit = check_limit(stocks)
             snapshot = get_snapshot(stocks)
             # 减少过于频繁的日志输出
-            log.debug("line:{} snapshot retrieved for {} stocks".format(118, len(snapshot) if snapshot else 0))
+            log.debug("line:{} snapshot retrieved for {} stocks".format(118,
+                                                                        len(snapshot) if snapshot else 0))
 
             for stock, infos in snapshot.items():
                 # 减少过于频繁的日志输出
@@ -163,7 +129,7 @@ def handle_data(context, data):
                 stock_hit_status = limit.get(stock, LUCK_CODE)
                 if stock_hit_status in g.hit_status:
                     if g.limit_stock > 3:
-                        log.debug("line:{} buy stock more than 3, skip stock "\
+                        log.debug("line:{} buy stock more than 3, skip stock " \
                                   "buying.".format(124))
                         # 达到购买限制时跳出当前循环而不是break（这样只跳出内层循环）
                         continue
@@ -208,7 +174,8 @@ def handle_data(context, data):
         except Exception as e:
             # 提供更具体的错误信息
             log.error("line:{} Error processing hit_board_name {}: {} "
-                      "{}".format(153, hit_board_name, str(e), traceback.format_exc()))
+                      "{}".format(153, hit_board_name, str(e),
+                                  traceback.format_exc()))
 
     # 减少过于频繁的日志输出
     log.debug("line:{} interval_handle end".format(155))

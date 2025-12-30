@@ -4,37 +4,7 @@
 """
 
 import json
-import zipfile
 from datetime import datetime, timedelta
-
-
-def unzip_stock_list_from_data(target_dir: str, zip_name: str):
-    """
-    解压目标 zip 包并读取近一天的股票模块名单 json，异常时返回空列表。
-    """
-    try:
-        base_path = get_research_path() + target_dir
-        print("line:{} {}".format(18, base_path))
-        zip_path = base_path + zip_name
-        unzip_path = base_path + "input_data/"
-        create_dir(unzip_path)
-
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(unzip_path)
-    except Exception as e:
-        log.error("line:{} {} unzip error] {}".format(26, zip_path, e))
-        return []
-
-    file_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    json_file = "{}_top_three_module.json".format(file_date)
-    full_path = unzip_path + json_file
-    stock_list = []
-    try:
-        with open(full_path, "r", encoding="utf-8") as f:
-            stock_list = json.load(f)
-    except Exception as e:
-        log.warning("line:{} [read json fail] {}: {}".format(37, full_path, e))
-    return stock_list
 
 
 def initialize(context):
@@ -50,19 +20,24 @@ def initialize(context):
         set_backtest()  # 设置回测条件
 
 
-def unzip_file():
-    """
-    解包默认 zip 并返回股票名单。
-    """
-    target_dir = "george/"
-    zip_name = "top_three.zip"
-    stock_list = unzip_stock_list_from_data(target_dir, zip_name)
+def read_stock_pool():
+    george_path = get_research_path() + "george/"
+    print("line:{} {}".format(18, george_path))
+    yesterday_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    json_file = "{}_top_three_module.json".format(yesterday_date)
+    full_path = george_path + "input_data/" + json_file
+    stock_list = []
+    try:
+        with open(full_path, "r", encoding="utf-8") as f:
+            stock_list = json.load(f)
+    except Exception as e:
+        log.warning("line:{} [read json fail] {}: {}"
+                    "".format(37, full_path, e))
+
     log.info(
-        "[now] line:{} unzip {} result, stock_list count: {}".format(61,
-                                                                     zip_name,
-                                                                     len(stock_list) if hasattr(
-                                                                         stock_list,
-                                                                         '__len__') else '?'))
+        "[now] line:{} full_path:{} result, stock_list count: {}"
+        "".format(61, full_path,
+                  len(stock_list) if hasattr(stock_list, '__len__') else '?'))
     return stock_list
 
 
@@ -73,7 +48,7 @@ def set_params():
     """
     g.amount = 100
     g.limit_stock = 0
-    g.fund_list = unzip_file()
+    g.fund_list = read_stock_pool()
     g.security = sum(g.fund_list.values(), []) if g.fund_list else []
     set_universe(g.security)
 
