@@ -4,7 +4,12 @@
 """
 
 import json
+import traceback
 from datetime import datetime, timedelta
+
+
+def get_yesterday():
+    return (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def initialize(context):
@@ -52,7 +57,7 @@ def set_params():
     # 添加简单的缓存机制，避免在同一天内重复解压文件
     if not hasattr(g, 'cached_fund_list') or not hasattr(g,
                                                          'cache_date') or g.cache_date != get_yesterday():
-        g.fund_list = unzip_file()
+        g.fund_list = read_stock_pool()
         g.cached_fund_list = g.fund_list
         g.cache_date = get_yesterday()
     else:

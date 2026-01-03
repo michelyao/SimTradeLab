@@ -294,19 +294,17 @@ def initialize(context):
     g.strategy.initialize(context)
 
 
-def before_trading_start():
-    """盘前处理 - IQEngine框架不传递context参数"""
-    # IQEngine框架中通过全局context访问
+def before_trading_start(context, *args):
+    """盘前处理"""
     pass
 
 
-def check_signals_and_execute():
-    """检查信号并执行 - IQEngine框架不传递context参数"""
-    # IQEngine框架中通过全局context访问
+def check_signals_and_execute(context, *args):
+    """检查信号并执行"""
     pass
 
 
-def handle_data(context):
+def handle_data(context, *args):
     """IQEngine框架的主处理函数"""
     current_time = context.current_dt
 
