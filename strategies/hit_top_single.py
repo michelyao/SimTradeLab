@@ -15,14 +15,14 @@ def initialize(context):
     g.signal = 0
     g.hit_status = [1, 2]
     is_trade_flag = is_trade()
-    run_interval(context, interval_handle, seconds=1)
+    # run_interval(context, interval_handle, seconds=1)
     if not is_trade_flag:
         set_backtest()  # 设置回测条件
 
 
 def read_stock_pool():
     george_path = get_research_path() + "george/"
-    print("line:{} {}".format(18, george_path))
+    print("line:{} {}".format(25, george_path))
     yesterday_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     json_file = "{}_top_three_module.json".format(yesterday_date)
     full_path = george_path + "input_data/" + json_file
@@ -32,11 +32,11 @@ def read_stock_pool():
             stock_list = json.load(f)
     except Exception as e:
         log.warning("line:{} [read json fail] {}: {}"
-                    "".format(37, full_path, e))
+                    "".format(34, full_path, e))
 
     log.info(
         "[now] line:{} full_path:{} result, stock_list count: {}"
-        "".format(61, full_path,
+        "".format(37, full_path,
                   len(stock_list) if hasattr(stock_list, '__len__') else '?'))
     return stock_list
 
@@ -77,26 +77,30 @@ def before_trading_start(context, data):
     g.current_date = context.current_dt.strftime("%Y%m%d")
 
 
-# def handle_data(context, data):
-def interval_handle(context):
+def handle_data(context, data):
+# def interval_handle(context):
     """
     核心轮询主流程。遍历股票池，检测涨停条件，并触发下单。
     优化版本：减少不必要的日志输出，提高执行效率
     """
     # 减少INFO级别日志频率，只在关键节点记录
-    log.info("line:{} interval_handle start".format(107))
+    log.info("line:{} interval_handle start".format(87))
     if not g.fund_list:
         log.warning(
-            "line:{} fund_list is empty, skip interval_handle.".format(110))
+            "line:{} fund_list is empty, skip interval_handle.".format(89))
         return
 
     for hit_board_name, stocks in g.fund_list.items():
         for stock in stocks:
             try:
-                limit = check_limit(stock.upper())
+                stock = stock.upper()
+                limit = check_limit(stock)
                 # 减少DEBUG级别日志输出
                 log.debug(
-                    "line:{} stock: {} limit: {}".format(118, stock, limit))
+                    "line:{} stock: {} limit: {}".format(98, stock, limit))
+
+
+
 
                 stock_hit_status = get_check_limit_value(limit)
                 if stock_hit_status in g.hit_status:
@@ -104,17 +108,18 @@ def interval_handle(context):
                         # 优化循环控制：达到购买限制时完全退出
                         log.info(
                             "line:{} reached buy limit, exit processing.".format(
-                                123))
+                                105))
                         return
                     _proc_hit_board(stock)
             except Exception as e:
                 # 减少详细的traceback输出，只记录关键错误信息
                 log.debug(
-                    "line:{} Error processing stock {}: {}".format(127, stock,
+                    "line:{} Error processing stock {}: {}".format(112, stock,
                                                                    str(e)))
 
-    # 减少INFO级别日志频率
-    # log.info("line:{} interval_handle end".format(131))
+
+
+
 
 
 def get_check_limit_value(limit):
@@ -132,21 +137,21 @@ def _proc_hit_board(stock):
     """
     优化版本：按照 get_snapshot 接口规范获取实时行情数据，进行打板检测
     """
-    log.info("line:{} stock:{} _proc_hit_board start".format(131, stock))
+    log.info("line:{} stock:{} _proc_hit_board start".format(135, stock))
     try:
         snapshot = get_snapshot(stock)
-        log.debug("line:{} snapshot {}".format(134, snapshot))
+        log.debug("line:{} snapshot {}".format(138, snapshot))
         
         # 验证快照数据不为空
         if not snapshot:
-            log.debug("line:{} snapshot is empty for stock {}".format(137, stock))
+            log.debug("line:{} snapshot is empty for stock {}".format(142, stock))
             return
         
         # 验证股票代码在快照中存在
         infos = snapshot.get(stock)
-        log.debug("line:{} infos {}".format(141, infos))
+        log.debug("line:{} infos {}".format(147, infos))
         if infos is None:
-            log.debug("line:{} No snapshot for stock {}".format(144, stock))
+            log.debug("line:{} No snapshot for stock {}".format(149, stock))
             return
         
         # 验证必要字段存在
@@ -155,17 +160,17 @@ def _proc_hit_board(stock):
         offer_grp = infos.get("offer_grp")
         
         if up_px is None or last_px is None:
-            log.debug("line:{} Missing required fields for stock {}".format(152, stock))
+            log.debug("line:{} Missing required fields for stock {}".format(158, stock))
             return
         
         # 验证 offer_grp 数据结构
         if not offer_grp or not isinstance(offer_grp, dict):
-            log.debug("line:{} offer_grp data not available for stock {}".format(156, stock))
+            log.debug("line:{} offer_grp data not available for stock {}".format(163, stock))
             return
         
         # 验证第 5 档数据存在
         if 5 not in offer_grp or len(offer_grp[5]) < 2:
-            log.debug("line:{} offer_grp level 5 data incomplete for stock {}".format(160, stock))
+            log.debug("line:{} offer_grp level 5 data incomplete for stock {}".format(168, stock))
             return
         
         # 提取第 5 档数据
@@ -175,12 +180,12 @@ def _proc_hit_board(stock):
         # 打板检测
         if level_5_price == up_px and level_5_order <= 5000:
             log.info("line:{} george下单买入: last_px: {}, level_5_price: {}, stock: {}".format(
-                167, last_px, level_5_price, stock))
+                177, last_px, level_5_price, stock))
         else:
             log.info("line:{} george 打板未达到条件: last_px: {}, level_5_price: {}, stock: {}".format(
-                170, last_px, level_5_price, stock))
+                180, last_px, level_5_price, stock))
         
-        log.info("line:{} _proc_hit_board end".format(172))
+        log.info("line:{} _proc_hit_board end".format(183))
     
     except Exception as e:
-        log.debug("line:{} get_snapshot failed for {}: {}".format(175, stock, str(e)))
+        log.debug("line:{} get_snapshot failed for {}: {}".format(186, stock, str(e)))
