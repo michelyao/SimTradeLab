@@ -149,7 +149,6 @@ def _proc_hit_board(stock):
         
         # 验证股票代码在快照中存在
         infos = snapshot.get(stock)
-        log.debug("line:{} infos {}".format(147, infos))
         if infos is None:
             log.debug("line:{} No snapshot for stock {}".format(149, stock))
             return
@@ -189,3 +188,5 @@ def _proc_hit_board(stock):
     
     except Exception as e:
         log.debug("line:{} get_snapshot failed for {}: {}".format(186, stock, str(e)))
+
+

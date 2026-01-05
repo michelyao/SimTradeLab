@@ -52,18 +52,20 @@ import pandas as pd
 import numpy as np
 from .logger import log
 
+
 def get_history(
-    engine: 'BacktestEngine',
-    count: int,
-    frequency: str = '1d',
-    field: Union[str, List[str]] = ['open','high','low','close','volume','money','price'],
-    security_list: Optional[List[str]] = None,
-    fq: Optional[str] = None,
-    include: bool = False,
-    fill: str = 'nan',
-    is_dict: bool = False,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+        engine: 'BacktestEngine',
+        count: int,
+        frequency: str = '1d',
+        field: Union[str, List[str]] = ['open', 'high', 'low', 'close',
+                                        'volume', 'money', 'price'],
+        security_list: Optional[List[str]] = None,
+        fq: Optional[str] = None,
+        include: bool = False,
+        fill: str = 'nan',
+        is_dict: bool = False,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
 ) -> Union[pd.DataFrame, Dict[str, Dict[str, np.ndarray]]]:
     """
     获取历史数据
@@ -95,8 +97,9 @@ def get_history(
         field = [field]
 
     frequency_mapping = {
-        '1d': 'D', 'daily': 'D', '1m': 'T', 'minute': 'T', '5m': '5T', '5min': '5T',
-        '15m': '15T', '15min': '15T', '30m': '30T', '30min': '30T', '1h': 'H',
+        '1d'  : 'D', 'daily': 'D', '1m': 'T', 'minute': 'T', '5m': '5T',
+        '5min': '5T',
+        '15m' : '15T', '15min': '15T', '30m': '30T', '30min': '30T', '1h': 'H',
         'hour': 'H', '1w': 'W', 'week': 'W', '1M': 'M', 'month': 'M'
     }
     pandas_freq = frequency_mapping.get(frequency, 'D')
@@ -116,14 +119,18 @@ def get_history(
             hist_df = engine.data[sec].copy()
 
             if hasattr(engine, 'context') and engine.context.current_dt:
-                valid_hist = hist_df[hist_df.index <= engine.context.current_dt] if include else hist_df[hist_df.index < engine.context.current_dt]
+                valid_hist = hist_df[
+                    hist_df.index <= engine.context.current_dt] if include else \
+                    hist_df[hist_df.index < engine.context.current_dt]
             else:
                 valid_hist = hist_df
 
             if start_date:
-                valid_hist = valid_hist[valid_hist.index >= pd.to_datetime(start_date)]
+                valid_hist = valid_hist[
+                    valid_hist.index >= pd.to_datetime(start_date)]
             if end_date:
-                valid_hist = valid_hist[valid_hist.index <= pd.to_datetime(end_date)]
+                valid_hist = valid_hist[
+                    valid_hist.index <= pd.to_datetime(end_date)]
 
             if pandas_freq != 'D' and not valid_hist.empty:
                 if pandas_freq in ['T', '5T', '15T', '30T', 'H']:
@@ -131,24 +138,35 @@ def get_history(
                     for _, row in valid_hist.iterrows():
                         periods_per_day = 240 if pandas_freq == 'T' else 48 if pandas_freq == '5T' else 16 if pandas_freq == '15T' else 8 if pandas_freq == '30T' else 4
                         day_start = _.replace(hour=9, minute=30)
-                        time_range = pd.date_range(start=day_start, periods=periods_per_day, freq=pandas_freq)
+                        time_range = pd.date_range(start=day_start,
+                                                   periods=periods_per_day,
+                                                   freq=pandas_freq)
                         daily_range = row['high'] - row['low']
                         for i, _ in enumerate(time_range):
                             progress = i / periods_per_day
                             noise = np.random.normal(0, daily_range * 0.01)
-                            minute_close = max(row['low'], min(row['high'], row['low'] + daily_range * progress + noise))
+                            minute_close = max(row['low'], min(row['high'], row[
+                                'low'] + daily_range * progress + noise))
                             expanded_data.append({
-                                'open': minute_close * (1 + np.random.normal(0, 0.001)),
-                                'high': minute_close * (1 + abs(np.random.normal(0, 0.002))),
-                                'low': minute_close * (1 - abs(np.random.normal(0, 0.002))),
-                                'close': minute_close,
+                                'open'  : minute_close * (
+                                        1 + np.random.normal(0, 0.001)),
+                                'high'  : minute_close * (1 + abs(
+                                    np.random.normal(0, 0.002))),
+                                'low'   : minute_close * (1 - abs(
+                                    np.random.normal(0, 0.002))),
+                                'close' : minute_close,
                                 'volume': row['volume'] / periods_per_day
                             })
                     if expanded_data:
                         valid_hist = pd.DataFrame(expanded_data)
-                        valid_hist.index = pd.date_range(start=valid_hist.index[0].replace(hour=9, minute=30), periods=len(expanded_data), freq=pandas_freq)
+                        valid_hist.index = pd.date_range(
+                            start=valid_hist.index[0].replace(hour=9,
+                                                              minute=30),
+                            periods=len(expanded_data), freq=pandas_freq)
                 elif pandas_freq in ['W', 'M']:
-                    valid_hist = valid_hist.resample(pandas_freq).agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).dropna()
+                    valid_hist = valid_hist.resample(pandas_freq).agg(
+                        {'open' : 'first', 'high': 'max', 'low': 'min',
+                         'close': 'last', 'volume': 'sum'}).dropna()
 
             if count and len(valid_hist) > count:
                 valid_hist = valid_hist.tail(count)
@@ -165,22 +183,31 @@ def get_history(
                     elif ext_field == 'change':
                         valid_hist['change'] = valid_hist['close'] - pre_close
                     elif ext_field == 'pct_change':
-                        valid_hist['pct_change'] = (valid_hist['close'] / pre_close - 1) * 100
+                        valid_hist['pct_change'] = (valid_hist[
+                                                        'close'] / pre_close - 1) * 100
                     elif ext_field == 'amplitude':
-                        valid_hist['amplitude'] = ((valid_hist['high'] - valid_hist['low']) / pre_close) * 100
+                        valid_hist['amplitude'] = ((valid_hist['high'] -
+                                                    valid_hist[
+                                                        'low']) / pre_close) * 100
                     elif ext_field == 'turnover_rate':
-                        hash_factor = int(hashlib.md5(sec.encode()).hexdigest()[:8], 16) / 0xffffffff
+                        hash_factor = int(
+                            hashlib.md5(sec.encode()).hexdigest()[:8],
+                            16) / 0xffffffff
                         valid_hist['turnover_rate'] = 2.5 + 5.0 * hash_factor
                     elif ext_field == 'amount':
-                        valid_hist['amount'] = valid_hist['volume'] * valid_hist['close'] / 10000
+                        valid_hist['amount'] = valid_hist['volume'] * \
+                                               valid_hist['close'] / 10000
                     elif ext_field == 'vwap':
-                        valid_hist['vwap'] = (valid_hist['high'] + valid_hist['low'] + valid_hist['close'] * 2) / 4
+                        valid_hist['vwap'] = (valid_hist['high'] + valid_hist[
+                            'low'] + valid_hist['close'] * 2) / 4
                     elif ext_field == 'high_limit':
                         valid_hist['high_limit'] = pre_close * 1.1
                     elif ext_field == 'low_limit':
                         valid_hist['low_limit'] = pre_close * 0.9
 
-            result[sec] = {col: valid_hist[col].to_numpy() if col in valid_hist.columns else np.array([]) for col in field}
+            result[sec] = {col: valid_hist[
+                col].to_numpy() if col in valid_hist.columns else np.array([])
+                           for col in field}
         return result
 
     result_df = pd.DataFrame()
@@ -189,13 +216,17 @@ def get_history(
             continue
         hist_df = engine.data[sec].copy()
         if hasattr(engine, 'context') and engine.context.current_dt:
-            valid_hist = hist_df[hist_df.index <= engine.context.current_dt] if include else hist_df[hist_df.index < engine.context.current_dt]
+            valid_hist = hist_df[
+                hist_df.index <= engine.context.current_dt] if include else \
+                hist_df[hist_df.index < engine.context.current_dt]
         else:
             valid_hist = hist_df
         if start_date:
-            valid_hist = valid_hist[valid_hist.index >= pd.to_datetime(start_date)]
+            valid_hist = valid_hist[
+                valid_hist.index >= pd.to_datetime(start_date)]
         if end_date:
-            valid_hist = valid_hist[valid_hist.index <= pd.to_datetime(end_date)]
+            valid_hist = valid_hist[
+                valid_hist.index <= pd.to_datetime(end_date)]
         if count and len(valid_hist) > count:
             valid_hist = valid_hist.tail(count)
         if valid_hist.empty:
@@ -205,23 +236,25 @@ def get_history(
                 result_df[(f, sec)] = valid_hist[f]
             else:
                 log.warning(f"字段 '{f}' 不存在")
-    
+
     # 确保即使结果为空也返回明确的DataFrame而不是容易被误用的空DataFrame
     if result_df.empty:
         # 返回带有明确列结构的空DataFrame，避免布尔值混淆
-        columns = [(f, sec) for f in field for sec in security_list if sec in engine.data]
+        columns = [(f, sec) for f in field for sec in security_list if
+                   sec in engine.data]
         result_df = pd.DataFrame(columns=columns)
-    
+
     return result_df
 
+
 def get_price(
-    engine: 'BacktestEngine', 
-    security: Union[str, List[str]], 
-    start_date: Optional[str] = None, 
-    end_date: Optional[str] = None, 
-    frequency: str = '1d', 
-    fields: Optional[Union[str, List[str]]] = None, 
-    count: Optional[int] = None
+        engine: 'BacktestEngine',
+        security: Union[str, List[str]],
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        frequency: str = '1d',
+        fields: Optional[Union[str, List[str]]] = None,
+        count: Optional[int] = None
 ) -> pd.DataFrame:
     """
     获取价格数据
@@ -240,11 +273,14 @@ def get_price(
     """
     count = count or 1
     securities = [security] if isinstance(security, str) else security
-    fields = ['close'] if fields is None else ([fields] if isinstance(fields, str) else fields)
+    fields = ['close'] if fields is None else (
+        [fields] if isinstance(fields, str) else fields)
 
     all_supported_fields = {
-        'open', 'high', 'low', 'close', 'volume', 'pre_close', 'change', 'pct_change',
-        'amplitude', 'turnover_rate', 'vwap', 'amount', 'high_limit', 'low_limit'
+        'open', 'high', 'low', 'close', 'volume', 'pre_close', 'change',
+        'pct_change',
+        'amplitude', 'turnover_rate', 'vwap', 'amount', 'high_limit',
+        'low_limit'
     }
 
     result_data = {}
@@ -254,8 +290,10 @@ def get_price(
             continue
 
         hist_df = engine.data[sec]
-        current_dt = engine.context.current_dt if hasattr(engine, 'context') else None
-        valid_hist = hist_df[hist_df.index < current_dt] if current_dt else hist_df
+        current_dt = engine.context.current_dt if hasattr(engine,
+                                                          'context') else None
+        valid_hist = hist_df[
+            hist_df.index < current_dt] if current_dt else hist_df
 
         if valid_hist.empty:
             log.warning(f"股票 {sec} 没有有效的历史数据")
@@ -275,16 +313,22 @@ def get_price(
                     elif field == 'change':
                         calculated_values.append(row['close'] - pre_close)
                     elif field == 'pct_change':
-                        calculated_values.append(((row['close'] - pre_close) / pre_close) * 100)
+                        calculated_values.append(
+                            ((row['close'] - pre_close) / pre_close) * 100)
                     elif field == 'amplitude':
-                        calculated_values.append(((row['high'] - row['low']) / pre_close) * 100)
+                        calculated_values.append(
+                            ((row['high'] - row['low']) / pre_close) * 100)
                     elif field == 'turnover_rate':
-                        hash_factor = int(hashlib.md5(sec.encode()).hexdigest()[:8], 16) / 0xffffffff
+                        hash_factor = int(
+                            hashlib.md5(sec.encode()).hexdigest()[:8],
+                            16) / 0xffffffff
                         calculated_values.append(2.5 + 5.0 * hash_factor)
                     elif field == 'vwap':
-                        calculated_values.append((row['high'] + row['low'] + row['close'] * 2) / 4)
+                        calculated_values.append(
+                            (row['high'] + row['low'] + row['close'] * 2) / 4)
                     elif field == 'amount':
-                        calculated_values.append(row['volume'] * row['close'] / 10000)
+                        calculated_values.append(
+                            row['volume'] * row['close'] / 10000)
                     elif field == 'high_limit':
                         calculated_values.append(pre_close * 1.1)
                     elif field == 'low_limit':
@@ -296,20 +340,25 @@ def get_price(
 
     if not result_data:
         # 对于单个股票请求close价格的情况，返回None而不是空DataFrame，避免布尔值错误
-        if isinstance(security, str) and len(fields) == 1 and fields[0] == 'close':
+        if isinstance(security, str) and len(fields) == 1 and fields[
+            0] == 'close':
             return None
         return pd.DataFrame()
 
     sample_data = engine.data[securities[0]]
-    current_dt = engine.context.current_dt if hasattr(engine, 'context') else None
-    valid_hist = sample_data[sample_data.index < current_dt] if current_dt else sample_data
+    current_dt = engine.context.current_dt if hasattr(engine,
+                                                      'context') else None
+    valid_hist = sample_data[
+        sample_data.index < current_dt] if current_dt else sample_data
     time_index = valid_hist.tail(count).index
 
     result_df = pd.DataFrame()
     for field in fields:
         for sec in securities:
-            if sec in result_data and field in result_data[sec] and len(result_data[sec][field]) == len(time_index):
-                result_df[(field, sec)] = pd.Series(result_data[sec][field], index=time_index)
+            if sec in result_data and field in result_data[sec] and len(
+                    result_data[sec][field]) == len(time_index):
+                result_df[(field, sec)] = pd.Series(result_data[sec][field],
+                                                    index=time_index)
 
     if len(fields) == 1:
         result_df.columns = [col[1] for col in result_df.columns]
@@ -322,9 +371,10 @@ def get_price(
 
     return result_df
 
+
 def get_current_data(
-    engine: 'BacktestEngine', 
-    security: Optional[Union[str, List[str]]] = None
+        engine: 'BacktestEngine',
+        security: Optional[Union[str, List[str]]] = None
 ) -> Dict[str, Dict[str, float]]:
     """
     获取当前实时市场数据
@@ -336,7 +386,8 @@ def get_current_data(
     Returns:
         当前市场数据字典
     """
-    securities = list(engine.data.keys()) if security is None else ([security] if isinstance(security, str) else security)
+    securities = list(engine.data.keys()) if security is None else (
+        [security] if isinstance(security, str) else security)
     current_data = {}
     for sec in securities:
         if sec not in engine.data:
@@ -344,42 +395,63 @@ def get_current_data(
             continue
 
         hist_df = engine.data[sec]
-        current_dt = engine.context.current_dt if hasattr(engine, 'context') else None
-        valid_hist = hist_df[hist_df.index <= current_dt] if current_dt else hist_df
+        current_dt = engine.context.current_dt if hasattr(engine,
+                                                          'context') else None
+        valid_hist = hist_df[
+            hist_df.index <= current_dt] if current_dt else hist_df
 
         if valid_hist.empty:
             continue
 
         latest_data = valid_hist.iloc[-1]
-        hash_factor = int(hashlib.md5(sec.encode()).hexdigest()[:8], 16) / 0xffffffff
+        hash_factor = int(hashlib.md5(sec.encode()).hexdigest()[:8],
+                          16) / 0xffffffff
         current_price = latest_data['close']
         spread = current_price * 0.001
 
         current_data[sec] = {
-            'open': latest_data['open'], 'high': latest_data['high'], 'low': latest_data['low'],
-            'close': current_price, 'volume': latest_data['volume'],
-            'bid1': current_price - spread, 'bid2': current_price - spread * 2, 'bid3': current_price - spread * 3,
-            'bid4': current_price - spread * 4, 'bid5': current_price - spread * 5,
-            'ask1': current_price + spread, 'ask2': current_price + spread * 2, 'ask3': current_price + spread * 3,
-            'ask4': current_price + spread * 4, 'ask5': current_price + spread * 5,
-            'bid1_volume': int(1000 + 5000 * hash_factor), 'bid2_volume': int(800 + 4000 * hash_factor),
-            'bid3_volume': int(600 + 3000 * hash_factor), 'bid4_volume': int(400 + 2000 * hash_factor),
-            'bid5_volume': int(200 + 1000 * hash_factor), 'ask1_volume': int(1200 + 5500 * hash_factor),
-            'ask2_volume': int(900 + 4500 * hash_factor), 'ask3_volume': int(700 + 3500 * hash_factor),
-            'ask4_volume': int(500 + 2500 * hash_factor), 'ask5_volume': int(300 + 1500 * hash_factor),
-            'pre_close': current_price * 0.98, 'change': current_price * 0.02, 'pct_change': 2.04,
-            'amount': np.float64(latest_data['volume']) * np.float64(current_price) / 10000,
+            'open'         : latest_data['open'], 'high': latest_data['high'],
+            'low'          : latest_data['low'],
+            'close'        : current_price, 'volume': latest_data['volume'],
+            'bid1'         : current_price - spread,
+            'bid2'         : current_price - spread * 2,
+            'bid3'         : current_price - spread * 3,
+            'bid4'         : current_price - spread * 4,
+            'bid5'         : current_price - spread * 5,
+            'ask1'         : current_price + spread,
+            'ask2'         : current_price + spread * 2,
+            'ask3'         : current_price + spread * 3,
+            'ask4'         : current_price + spread * 4,
+            'ask5'         : current_price + spread * 5,
+            'bid1_volume'  : int(1000 + 5000 * hash_factor),
+            'bid2_volume'  : int(800 + 4000 * hash_factor),
+            'bid3_volume'  : int(600 + 3000 * hash_factor),
+            'bid4_volume'  : int(400 + 2000 * hash_factor),
+            'bid5_volume'  : int(200 + 1000 * hash_factor),
+            'ask1_volume'  : int(1200 + 5500 * hash_factor),
+            'ask2_volume'  : int(900 + 4500 * hash_factor),
+            'ask3_volume'  : int(700 + 3500 * hash_factor),
+            'ask4_volume'  : int(500 + 2500 * hash_factor),
+            'ask5_volume'  : int(300 + 1500 * hash_factor),
+            'pre_close'    : current_price * 0.98,
+            'change'       : current_price * 0.02, 'pct_change': 2.04,
+            'amount'       : np.float64(latest_data['volume']) * np.float64(
+                current_price) / 10000,
             'turnover_rate': 2.5 + 5.0 * hash_factor,
-            'high_limit': current_price * 0.98 * 1.1, 'low_limit': current_price * 0.98 * 0.9,
-            'amplitude': ((latest_data['high'] - latest_data['low']) / (current_price * 0.98)) * 100,
-            'vwap': (latest_data['high'] + latest_data['low'] + current_price * 2) / 4,
+            'high_limit'   : current_price * 0.98 * 1.1,
+            'low_limit'    : current_price * 0.98 * 0.9,
+            'amplitude'    : ((latest_data['high'] - latest_data['low']) / (
+                    current_price * 0.98)) * 100,
+            'vwap'         : (latest_data['high'] + latest_data[
+                'low'] + current_price * 2) / 4,
         }
     return current_data
 
+
 def get_market_snapshot(
-    engine: 'BacktestEngine', 
-    security: Optional[Union[str, List[str]]] = None, 
-    fields: Optional[Union[str, List[str]]] = None
+        engine: 'BacktestEngine',
+        security: Optional[Union[str, List[str]]] = None,
+        fields: Optional[Union[str, List[str]]] = None
 ) -> pd.DataFrame:
     """
     获取市场快照数据
@@ -397,23 +469,31 @@ def get_market_snapshot(
         return pd.DataFrame()
 
     all_fields = [
-        'open', 'high', 'low', 'close', 'volume', 'amount', 'pre_close', 'change', 'pct_change',
-        'amplitude', 'turnover_rate', 'bid1', 'bid2', 'bid3', 'bid4', 'bid5', 'ask1', 'ask2', 'ask3',
-        'ask4', 'ask5', 'bid1_volume', 'bid2_volume', 'bid3_volume', 'bid4_volume', 'bid5_volume',
-        'ask1_volume', 'ask2_volume', 'ask3_volume', 'ask4_volume', 'ask5_volume', 'high_limit',
+        'open', 'high', 'low', 'close', 'volume', 'amount', 'pre_close',
+        'change', 'pct_change',
+        'amplitude', 'turnover_rate', 'bid1', 'bid2', 'bid3', 'bid4', 'bid5',
+        'ask1', 'ask2', 'ask3',
+        'ask4', 'ask5', 'bid1_volume', 'bid2_volume', 'bid3_volume',
+        'bid4_volume', 'bid5_volume',
+        'ask1_volume', 'ask2_volume', 'ask3_volume', 'ask4_volume',
+        'ask5_volume', 'high_limit',
         'low_limit', 'vwap'
     ]
-    fields = ['open', 'high', 'low', 'close', 'volume', 'change', 'pct_change'] if fields is None else ([fields] if isinstance(fields, str) else fields)
+    fields = ['open', 'high', 'low', 'close', 'volume', 'change',
+              'pct_change'] if fields is None else (
+        [fields] if isinstance(fields, str) else fields)
 
-    data_dict = {field: [current_data[sec].get(field) for sec in current_data] for field in fields}
+    data_dict = {field: [current_data[sec].get(field) for sec in current_data]
+                 for field in fields}
     return pd.DataFrame(data_dict, index=list(current_data.keys()))
 
+
 def get_technical_indicators(
-    engine: 'BacktestEngine', 
-    security: Union[str, List[str]], 
-    indicators: Union[str, List[str]], 
-    period: int = 20, 
-    **kwargs: Any
+        engine: 'BacktestEngine',
+        security: Union[str, List[str]],
+        indicators: Union[str, List[str]],
+        period: int = 20,
+        **kwargs: Any
 ) -> pd.DataFrame:
     """
     计算技术指标
@@ -438,8 +518,10 @@ def get_technical_indicators(
             continue
 
         hist_df = engine.data[sec]
-        current_dt = engine.context.current_dt if hasattr(engine, 'context') else None
-        valid_hist = hist_df[hist_df.index <= current_dt] if current_dt else hist_df
+        current_dt = engine.context.current_dt if hasattr(engine,
+                                                          'context') else None
+        valid_hist = hist_df[
+            hist_df.index <= current_dt] if current_dt else hist_df
 
         if len(valid_hist) < period:
             log.warning(f"股票 {sec} 的历史数据不足，需要至少 {period} 条数据")
@@ -453,15 +535,20 @@ def get_technical_indicators(
         for indicator in indicators:
             try:
                 if indicator.upper() == 'MA':
-                    result_data[sec][f'MA{period}'] = pd.Series(close_prices).rolling(window=period).mean().tolist()
+                    result_data[sec][f'MA{period}'] = pd.Series(
+                        close_prices).rolling(window=period).mean().tolist()
                 elif indicator.upper() == 'EMA':
-                    result_data[sec][f'EMA{period}'] = pd.Series(close_prices).ewm(span=period, adjust=False).mean().tolist()
+                    result_data[sec][f'EMA{period}'] = pd.Series(
+                        close_prices).ewm(span=period,
+                                          adjust=False).mean().tolist()
                 elif indicator.upper() == 'MACD':
                     fast_period = kwargs.get('fast_period', 12)
                     slow_period = kwargs.get('slow_period', 26)
                     signal_period = kwargs.get('signal_period', 9)
-                    ema_fast = pd.Series(close_prices).ewm(span=fast_period, adjust=False).mean()
-                    ema_slow = pd.Series(close_prices).ewm(span=slow_period, adjust=False).mean()
+                    ema_fast = pd.Series(close_prices).ewm(span=fast_period,
+                                                           adjust=False).mean()
+                    ema_slow = pd.Series(close_prices).ewm(span=slow_period,
+                                                           adjust=False).mean()
                     dif = ema_fast - ema_slow
                     dea = dif.ewm(span=signal_period, adjust=False).mean()
                     result_data[sec]['MACD_DIF'] = dif.tolist()
@@ -469,22 +556,30 @@ def get_technical_indicators(
                     result_data[sec]['MACD_HIST'] = ((dif - dea) * 2).tolist()
                 elif indicator.upper() == 'RSI':
                     delta = pd.Series(close_prices).diff()
-                    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-                    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+                    gain = (delta.where(delta > 0, 0)).rolling(
+                        window=period).mean()
+                    loss = (-delta.where(delta < 0, 0)).rolling(
+                        window=period).mean()
                     rs = gain / loss
-                    result_data[sec][f'RSI{period}'] = (100 - (100 / (1 + rs))).tolist()
+                    result_data[sec][f'RSI{period}'] = (
+                            100 - (100 / (1 + rs))).tolist()
                 elif indicator.upper() == 'BOLL':
                     std_multiplier = kwargs.get('std_multiplier', 2)
                     ma = pd.Series(close_prices).rolling(window=period).mean()
                     std = pd.Series(close_prices).rolling(window=period).std()
-                    result_data[sec]['BOLL_UPPER'] = (ma + std_multiplier * std).tolist()
+                    result_data[sec]['BOLL_UPPER'] = (
+                            ma + std_multiplier * std).tolist()
                     result_data[sec]['BOLL_MIDDLE'] = ma.tolist()
-                    result_data[sec]['BOLL_LOWER'] = (ma - std_multiplier * std).tolist()
+                    result_data[sec]['BOLL_LOWER'] = (
+                            ma - std_multiplier * std).tolist()
                 elif indicator.upper() == 'KDJ':
                     k_period = kwargs.get('k_period', 9)
-                    low_min = pd.Series(low_prices).rolling(window=k_period).min()
-                    high_max = pd.Series(high_prices).rolling(window=k_period).max()
-                    rsv = (pd.Series(close_prices) - low_min) / (high_max - low_min) * 100
+                    low_min = pd.Series(low_prices).rolling(
+                        window=k_period).min()
+                    high_max = pd.Series(high_prices).rolling(
+                        window=k_period).max()
+                    rsv = (pd.Series(close_prices) - low_min) / (
+                            high_max - low_min) * 100
                     k_values = rsv.ewm(com=2, adjust=False).mean()
                     d_values = k_values.ewm(com=2, adjust=False).mean()
                     j_values = 3 * k_values - 2 * d_values
@@ -494,12 +589,16 @@ def get_technical_indicators(
                 elif indicator.upper() == 'CCI':
                     # CCI (Commodity Channel Index) 顺势指标
                     cci_period = kwargs.get('cci_period', period)
-                    typical_price = (pd.Series(high_prices) + pd.Series(low_prices) + pd.Series(close_prices)) / 3
+                    typical_price = (pd.Series(high_prices) + pd.Series(
+                        low_prices) + pd.Series(close_prices)) / 3
                     sma_tp = typical_price.rolling(window=cci_period).mean()
+
                     # 计算平均绝对偏差 (MAD)
                     def calculate_mad(x):
                         return (x - x.mean()).abs().mean()
-                    mad = typical_price.rolling(window=cci_period).apply(calculate_mad, raw=False)
+
+                    mad = typical_price.rolling(window=cci_period).apply(
+                        calculate_mad, raw=False)
                     cci = (typical_price - sma_tp) / (0.015 * mad)
                     result_data[sec][f'CCI{cci_period}'] = cci.tolist()
             except Exception as e:
@@ -509,15 +608,18 @@ def get_technical_indicators(
         return pd.DataFrame()
 
     sample_data = engine.data[securities[0]]
-    current_dt = engine.context.current_dt if hasattr(engine, 'context') else None
-    valid_hist = sample_data[sample_data.index <= current_dt] if current_dt else sample_data
+    current_dt = engine.context.current_dt if hasattr(engine,
+                                                      'context') else None
+    valid_hist = sample_data[
+        sample_data.index <= current_dt] if current_dt else sample_data
     time_index = valid_hist.index
 
     result_df = pd.DataFrame()
     for sec in result_data:
         for indicator_name, values in result_data[sec].items():
             if len(values) == len(time_index):
-                result_df[(indicator_name, sec)] = pd.Series(values, index=time_index)
+                result_df[(indicator_name, sec)] = pd.Series(values,
+                                                             index=time_index)
 
     return result_df
 
@@ -526,11 +628,11 @@ def get_technical_indicators(
 # 符合ptradeAPI标准的独立技术指标函数
 
 def get_MACD(
-    engine: 'BacktestEngine', 
-    security: Union[str, List[str]], 
-    fast_period: int = 12, 
-    slow_period: int = 26, 
-    signal_period: int = 9
+        engine: 'BacktestEngine',
+        security: Union[str, List[str]],
+        fast_period: int = 12,
+        slow_period: int = 26,
+        signal_period: int = 9
 ) -> pd.DataFrame:
     """
     计算MACD指标 (异同移动平均线)
@@ -554,9 +656,9 @@ def get_MACD(
 
 
 def get_KDJ(
-    engine: 'BacktestEngine', 
-    security: Union[str, List[str]], 
-    k_period: int = 9
+        engine: 'BacktestEngine',
+        security: Union[str, List[str]],
+        k_period: int = 9
 ) -> pd.DataFrame:
     """
     计算KDJ指标 (随机指标)
@@ -576,9 +678,9 @@ def get_KDJ(
 
 
 def get_RSI(
-    engine: 'BacktestEngine', 
-    security: Union[str, List[str]], 
-    period: int = 14
+        engine: 'BacktestEngine',
+        security: Union[str, List[str]],
+        period: int = 14
 ) -> pd.DataFrame:
     """
     计算RSI指标 (相对强弱指标)
@@ -598,9 +700,9 @@ def get_RSI(
 
 
 def get_CCI(
-    engine: 'BacktestEngine', 
-    security: Union[str, List[str]], 
-    period: int = 20
+        engine: 'BacktestEngine',
+        security: Union[str, List[str]],
+        period: int = 20
 ) -> pd.DataFrame:
     """
     计算CCI指标 (顺势指标)
@@ -633,10 +735,10 @@ def get_market_list(engine: 'BacktestEngine') -> List[str]:
     """
     # 根据股票代码后缀判断市场
     markets = set()
-    
+
     if not engine.data:
         return []
-    
+
     for security in engine.data.keys():
         if '.' in security:
             market = security.split('.')[-1]
@@ -644,7 +746,7 @@ def get_market_list(engine: 'BacktestEngine') -> List[str]:
         else:
             # 默认市场
             markets.add('SZ')  # 深圳
-    
+
     market_list = list(markets)
     log.info(f"获取市场列表: {market_list}")
     return market_list
@@ -690,12 +792,14 @@ def get_datetime(engine: 'BacktestEngine') -> str:
     Returns:
         当前时间字符串
     """
-    if hasattr(engine, 'context') and engine.context and engine.context.current_dt:
+    if hasattr(engine,
+               'context') and engine.context and engine.context.current_dt:
         return engine.context.current_dt.strftime('%Y-%m-%d %H:%M:%S')
     return ""
 
 
-def get_previous_trading_date(engine: 'BacktestEngine', date: str = None) -> str:
+def get_previous_trading_date(engine: 'BacktestEngine',
+                              date: str = None) -> str:
     """
     获取上一交易日
     
@@ -708,7 +812,7 @@ def get_previous_trading_date(engine: 'BacktestEngine', date: str = None) -> str
     """
     from .utils import get_trading_day
     import pandas as pd
-    
+
     previous_date = get_trading_day(engine, date, offset=-1)
     if previous_date:
         return previous_date.strftime('%Y-%m-%d')
@@ -728,7 +832,7 @@ def get_next_trading_date(engine: 'BacktestEngine', date: str = None) -> str:
     """
     from .utils import get_trading_day
     import pandas as pd
-    
+
     next_date = get_trading_day(engine, date, offset=1)
     if next_date:
         return next_date.strftime('%Y-%m-%d')
@@ -750,24 +854,86 @@ def get_snapshot(engine: 'BacktestEngine', stock: str) -> Dict[str, Any]:
     Returns:
         dict: 快照数据
     """
-    trade_data = {'offer_grp': {1: [44.47, 3300, 0, {}], 2: [44.48, 2800, 0],
-                            3: [44.49, 3900, 0], 4: [44.5, 17300, 0],
-                            5: [44.51, 1600, 0]}, 'open_px': 44.91,
-              'pe_rate': 4294573.83, 'pb_rate': 11.42, 'entrust_diff': -100.0,
-              'entrust_rate': -0.2092, 'total_bidqty': 18900,
-              'preclose_px': 45.2, 'total_offer_turnover': 0, 'issue_date': 0,
-              'business_amount_out': 2600706, 'px_change_rate': -1.62,
-              'turnover_ratio': 0.0042, 'total_bid_turnover': 0,
-              'vol_ratio': 1.12, 'hsTimeStamp': 20220622102358580, 'amount': 0,
-              'prev_settlement': 0.0, 'circulation_amount': 1461560480,
-              'low_px': 44.31, 'down_px': 40.68,
-              'bid_grp': {1: [44.45, 600, 0, {}], 2: [44.44, 600, 0],
-                          3: [44.43, 8300, 0], 4: [44.42, 9200, 0],
-                          5: [44.41, 200, 0]}, 'business_balance': 274847503.0,
-              'business_amount': 6161800, 'business_amount_in': 3561094,
-              'last_px': 44.47, 'total_offerqty': 28900, 'up_px': 49.72,
-              'wavg_px': 44.6, 'high_px': 45.05, 'trade_status': 'TRADE'}
-    trade_data_mint_fact = {'entrust_rate': -0.5328, 'wavg_px': 29.12, 'contract_unit': 0, 'trade_status': 'TRADE', 'high_px': 29.12, 'business_amount_out': 52000, 'close_px': 0.0, 'business_amount_in': 0, 'entrust_diff': -130.0, 'exercise_type': '', 'prev_settlement': 0.0, 'total_bid_turnover': 0, 'contract_code': '', 'last_px': 29.12, 'up_px': 31.92, 'bid_grp': {1: [29.1, 2500, 0, {}], 2: [29.07, 2000, 0], 3: [29.06, 600, 0], 4: [29.05, 200, 0], 5: [29.03, 400, 0]}, 'low_px': 29.12, 'preclose_px': 29.02, 'call_put': '', 'pb_rate': 6.11, 'end_trade_date': 0, 'amount': 0, 'trade_mins': 0, 'px_change_rate': 0.34, 'exercise_date': 0, 'current_amount': 52000, 'tick_size': 0.0, 'security_status_flag': 0, 'pe_rate': 90.89, 'business_count': 113, 'business_balance': 1514240.0, 'total_offerqty': 18700, 'business_balance_scale': 1514240000, 'turnover_ratio': 0.0, 'offer_grp': {1: [29.12, 14300, 0, {}], 2: [29.13, 300, 0], 3: [29.14, 500, 0], 4: [29.15, 2600, 0], 5: [29.16, 1000, 0]}, 'business_amount': 52000, 'total_bidqty': 5700, 'avg_px': 0.0, 'issue_date': 0, 'vol_ratio': 0.489, 'hsTimeStamp': 20251219092850606, 'start_trade_date': 0, 'down_px': 26.12, 'circulation_amount': 1894130907, 'open_px': 29.12, 'type_flag': 0, 'settlement': 0.0, 'exercise_price': 0.0, 'expire_date': 0, 'total_offer_turnover': 0}
+    trade_data_mint_fact = {
+        '600363.SS': {'hsTimeStamp'                                   : 20260105092939000,
+                      'trade_mins'                                    : 0,
+                      'trade_status'                                  : 'TRADE',
+                      'preclose_px'                                   : 63.06,
+                      'open_px'                                       : 69.37,
+                      'last_px'                                       : 69.37,
+                      'high_px'                                       : 69.37,
+                      'low_px'                                        : 69.37,
+                      'wavg_px'                                       : 69.37,
+                      'business_count'                                : 4436,
+                      'business_amount'                               : 5377053,
+                      'business_balance'                              : 373006167.0,
+                      'up_px'                                         : 69.37,
+                      'down_px'                                       : 56.75,
+                      'current_amount'                                : 5377053,
+                      'business_amount_in'                            : 0,
+                      'business_amount_out'                           : 5377053,
+                      'issue_date'                                    : 0,
+                      'amount'                                        : 0,
+                      'settlement'                                    : 0.0,
+                      'prev_settlement'                               : 0.0,
+                      'turnover_ratio'                                : 0.0119,
+                      'type_flag'                                     : 0,
+                      'business_balance_scale'                        : 373006166610,
+                      'exercise_date'                                 : 0,
+                      'exercise_price'                                : 0.0,
+                      'contract_unit'                                 : 0,
+                      'contract_code'                                 : '',
+                      'exercise_type'                                 : '',
+                      'call_put'                                      : '',
+                      'start_trade_date'                              : 0,
+                      'end_trade_date'                                : 0,
+                      'expire_date'                                   : 0,
+                      'security_status_flag'                          : 0,
+                      'tick_size'                                     : 0.0,
+                      'entrust_rate'                                  : 1.0,
+                      'vol_ratio'                                     : 123.925,
+                      'entrust_diff'                                  : 32189.47,
+                      'pe_rate'                                       : 58.58,
+                      'pb_rate'                                       : 7.31,
+                      'circulation_amount'                            : 450888450,
+                      'px_change_rate'                                : 10.01,
+                      'total_bidqty'                                  : 3218947,
+                      'total_offerqty'                                : 0,
+                      'total_bid_turnover'                            : 0,
+                      'total_offer_turnover'                          : 0,
+                      'iopv'                                          : 0.0,
+                      'bid_grp'                                       : {
+                          1: [69.37, 1911247, 1347, {1 : 1047, 2: 200, 3: 500,
+                                                     4 : 100, 5: 100, 6: 110000,
+                                                     7 : 700, 8: 17000, 9: 300,
+                                                     10: 1500, 11: 800, 12: 200,
+                                                     13: 100, 14: 100, 15: 300,
+                                                     16: 100, 17: 100, 18: 500,
+                                                     19: 100, 20: 100, 21: 100,
+                                                     22: 1500, 23: 100, 24: 100,
+                                                     25: 200, 26: 100, 27: 100,
+                                                     28: 400, 29: 500, 30: 5000,
+                                                     31: 100, 32: 100, 33: 500,
+                                                     34: 1000, 35: 200, 36: 100,
+                                                     37: 500, 38: 100, 39: 700,
+                                                     40: 200, 41: 100, 42: 300,
+                                                     43: 500, 44: 100, 45: 100,
+                                                     46: 300, 47: 300, 48: 700,
+                                                     49: 100, 50: 500}],
+                          2: [69.36, 51600, 101],
+                          3: [69.35, 900, 4],
+                          4: [69.34, 1900, 4],
+                          5: [69.33, 5400, 8],
+                          6: [69.32, 1300, 1],
+                          7: [69.31, 700, 3],
+                          8: [69.3, 51800, 25],
+                          9: [69.26, 400, 2],
+                          10: [69.22, 1800, 1]},
+                      'offer_grp'                                     : {
+                          1 : [0.0, 0, 0, {}], 2: [0.0, 0, 0], 3: [0.0, 0, 0],
+                          4 : [0.0, 0, 0], 5: [0.0, 0, 0], 6: [0.0, 0, 0],
+                          7 : [0.0, 0, 0], 8: [0.0, 0, 0], 9: [0.0, 0, 0],
+                          10: [0.0, 0, 0]}}}
 
     if isinstance(stock, list):
         return {item: trade_data_mint_fact for item in stock}
@@ -777,21 +943,21 @@ def get_snapshot(engine: 'BacktestEngine', stock: str) -> Dict[str, Any]:
     if stock in engine.data:
         latest_data = engine.data[stock].iloc[-1]
         snapshot = {
-            'code': stock,
-            'open': latest_data['open'],
-            'high': latest_data['high'],
-            'low': latest_data['low'],
-            'close': latest_data['close'],
-            'volume': latest_data['volume'],
-            'turnover': latest_data['close'] * latest_data['volume'],
-            'bid1': latest_data['close'] * 0.999,
-            'ask1': latest_data['close'] * 1.001,
+            'code'       : stock,
+            'open'       : latest_data['open'],
+            'high'       : latest_data['high'],
+            'low'        : latest_data['low'],
+            'close'      : latest_data['close'],
+            'volume'     : latest_data['volume'],
+            'turnover'   : latest_data['close'] * latest_data['volume'],
+            'bid1'       : latest_data['close'] * 0.999,
+            'ask1'       : latest_data['close'] * 1.001,
             'bid1_volume': 10000,
             'ask1_volume': 10000
         }
     else:
         snapshot = {'code': stock, 'error': 'No data available'}
-    
+
     log.info(f"获取股票快照: {stock}")
     return snapshot
 
@@ -813,7 +979,7 @@ def get_volume_ratio(engine: 'BacktestEngine', stock: str) -> float:
         volume_ratio = recent_volume / avg_volume if avg_volume > 0 else 1.0
     else:
         volume_ratio = 1.0
-    
+
     log.info(f"获取量比: {stock} -> {volume_ratio:.2f}")
     return volume_ratio
 
@@ -872,8 +1038,10 @@ def get_pb_ratio(engine: 'BacktestEngine', stock: str) -> float:
     return pb_ratio
 
 
-def get_individual_entrust(engine: 'BacktestEngine', stocks: Union[str, List[str]], 
-                          start_time: str = None, end_time: str = None) -> Dict[str, pd.DataFrame]:
+def get_individual_entrust(engine: 'BacktestEngine',
+                           stocks: Union[str, List[str]],
+                           start_time: str = None, end_time: str = None) -> \
+        Dict[str, pd.DataFrame]:
     """
     获取逐笔委托行情 (PTrade兼容)
 
@@ -887,7 +1055,7 @@ def get_individual_entrust(engine: 'BacktestEngine', stocks: Union[str, List[str
         dict: 逐笔委托数据，key为股票代码，value为DataFrame
     """
     from datetime import datetime, timedelta
-    
+
     if isinstance(stocks, str):
         stocks = [stocks]
 
@@ -907,12 +1075,18 @@ def get_individual_entrust(engine: 'BacktestEngine', stocks: Union[str, List[str
         # 生成模拟数据
         base_price = 10.0  # 基础价格
         entrust_data = pd.DataFrame({
-            'business_time': [int(t.timestamp() * 1000) for t in time_range],  # 毫秒时间戳
-            'hq_px': np.round(base_price + np.random.normal(0, 0.1, n_records), 2),  # 委托价格
-            'business_amount': np.random.randint(100, 10000, n_records),  # 委托量
-            'order_no': [f"ORD{i:06d}" for i in range(n_records)],  # 委托编号
-            'business_direction': np.random.choice([0, 1], n_records),  # 0-卖，1-买
-            'trans_kind': np.random.choice([1, 2, 3], n_records)  # 1-市价，2-限价，3-本方最优
+            'business_time'     : [int(t.timestamp() * 1000) for t in
+                                   time_range],  # 毫秒时间戳
+            'hq_px'             : np.round(
+                base_price + np.random.normal(0, 0.1, n_records), 2),  # 委托价格
+            'business_amount'   : np.random.randint(100, 10000, n_records),
+            # 委托量
+            'order_no'          : [f"ORD{i:06d}" for i in range(n_records)],
+            # 委托编号
+            'business_direction': np.random.choice([0, 1], n_records),
+            # 0-卖，1-买
+            'trans_kind'        : np.random.choice([1, 2, 3], n_records)
+            # 1-市价，2-限价，3-本方最优
         })
 
         result[stock] = entrust_data
@@ -921,8 +1095,10 @@ def get_individual_entrust(engine: 'BacktestEngine', stocks: Union[str, List[str
     return result
 
 
-def get_individual_transaction(engine: 'BacktestEngine', stocks: Union[str, List[str]], 
-                             start_time: str = None, end_time: str = None) -> Dict[str, pd.DataFrame]:
+def get_individual_transaction(engine: 'BacktestEngine',
+                               stocks: Union[str, List[str]],
+                               start_time: str = None, end_time: str = None) -> \
+        Dict[str, pd.DataFrame]:
     """
     获取逐笔成交行情 (PTrade兼容)
 
@@ -936,7 +1112,7 @@ def get_individual_transaction(engine: 'BacktestEngine', stocks: Union[str, List
         dict: 逐笔成交数据，key为股票代码，value为DataFrame
     """
     from datetime import datetime, timedelta
-    
+
     if isinstance(stocks, str):
         stocks = [stocks]
 
@@ -956,16 +1132,25 @@ def get_individual_transaction(engine: 'BacktestEngine', stocks: Union[str, List
         # 生成模拟数据
         base_price = 10.0  # 基础价格
         transaction_data = pd.DataFrame({
-            'business_time': [int(t.timestamp() * 1000) for t in time_range],  # 毫秒时间戳
-            'hq_px': np.round(base_price + np.random.normal(0, 0.05, n_records), 2),  # 成交价格
-            'business_amount': np.random.randint(100, 5000, n_records),  # 成交量
-            'trade_index': [f"TRD{i:06d}" for i in range(n_records)],  # 成交编号
-            'business_direction': np.random.choice([0, 1], n_records),  # 0-卖，1-买
-            'buy_no': [f"BUY{i:06d}" for i in range(n_records)],  # 叫买方编号
-            'sell_no': [f"SELL{i:06d}" for i in range(n_records)],  # 叫卖方编号
-            'trans_flag': np.random.choice([0, 1], n_records, p=[0.95, 0.05]),  # 0-普通，1-撤单
-            'trans_identify_am': np.random.choice([0, 1], n_records, p=[0.9, 0.1]),  # 0-盘中，1-盘后
-            'channel_num': np.random.randint(1, 10, n_records)  # 成交通道信息
+            'business_time'     : [int(t.timestamp() * 1000) for t in
+                                   time_range],  # 毫秒时间戳
+            'hq_px'             : np.round(
+                base_price + np.random.normal(0, 0.05, n_records), 2),  # 成交价格
+            'business_amount'   : np.random.randint(100, 5000, n_records),
+            # 成交量
+            'trade_index'       : [f"TRD{i:06d}" for i in range(n_records)],
+            # 成交编号
+            'business_direction': np.random.choice([0, 1], n_records),
+            # 0-卖，1-买
+            'buy_no'            : [f"BUY{i:06d}" for i in range(n_records)],
+            # 叫买方编号
+            'sell_no'           : [f"SELL{i:06d}" for i in range(n_records)],
+            # 叫卖方编号
+            'trans_flag'        : np.random.choice([0, 1], n_records,
+                                                   p=[0.95, 0.05]),  # 0-普通，1-撤单
+            'trans_identify_am' : np.random.choice([0, 1], n_records,
+                                                   p=[0.9, 0.1]),  # 0-盘中，1-盘后
+            'channel_num'       : np.random.randint(1, 10, n_records)  # 成交通道信息
         })
 
         result[stock] = transaction_data
@@ -987,7 +1172,7 @@ def get_gear_price(engine: 'BacktestEngine', security: str) -> Dict[str, Any]:
     """
     import random
     from datetime import datetime
-    
+
     # 模拟档位行情数据
     base_price = 10.0
 
@@ -1002,23 +1187,28 @@ def get_gear_price(engine: 'BacktestEngine', security: str) -> Dict[str, Any]:
         ask_prices.append(ask_price)
 
     gear_data = {
-        'security': security,
-        'timestamp': int(datetime.now().timestamp() * 1000),
-        'bid_prices': bid_prices,  # 买一到买五价格
-        'bid_volumes': [random.randint(100, 10000) for _ in range(5)],  # 买一到买五量
-        'ask_prices': ask_prices,  # 卖一到卖五价格
-        'ask_volumes': [random.randint(100, 10000) for _ in range(5)],  # 卖一到卖五量
-        'last_price': base_price,  # 最新价
-        'total_bid_volume': sum([random.randint(100, 10000) for _ in range(5)]),  # 委买总量
-        'total_ask_volume': sum([random.randint(100, 10000) for _ in range(5)]),  # 委卖总量
+        'security'        : security,
+        'timestamp'       : int(datetime.now().timestamp() * 1000),
+        'bid_prices'      : bid_prices,  # 买一到买五价格
+        'bid_volumes'     : [random.randint(100, 10000) for _ in range(5)],
+        # 买一到买五量
+        'ask_prices'      : ask_prices,  # 卖一到卖五价格
+        'ask_volumes'     : [random.randint(100, 10000) for _ in range(5)],
+        # 卖一到卖五量
+        'last_price'      : base_price,  # 最新价
+        'total_bid_volume': sum([random.randint(100, 10000) for _ in range(5)]),
+        # 委买总量
+        'total_ask_volume': sum([random.randint(100, 10000) for _ in range(5)]),
+        # 委卖总量
     }
 
     log.info(f"获取档位行情: {security}")
     return gear_data
 
 
-def get_sort_msg(engine: 'BacktestEngine', market_type: str = 'sector', 
-                 sort_field: str = 'pct_change', ascending: bool = False, count: int = 20) -> List[Dict[str, Any]]:
+def get_sort_msg(engine: 'BacktestEngine', market_type: str = 'sector',
+                 sort_field: str = 'pct_change', ascending: bool = False,
+                 count: int = 20) -> List[Dict[str, Any]]:
     """
     获取板块、行业的涨幅排名 (PTrade兼容)
 
@@ -1033,7 +1223,7 @@ def get_sort_msg(engine: 'BacktestEngine', market_type: str = 'sector',
         list: 排名数据列表
     """
     import random
-    
+
     # 模拟板块/行业数据
     if market_type == 'sector':
         sectors = [
@@ -1054,12 +1244,12 @@ def get_sort_msg(engine: 'BacktestEngine', market_type: str = 'sector',
     sort_data = []
     for i, name in enumerate(data_source[:count]):
         item = {
-            'name': name,
-            'code': f"{market_type.upper()}{i:03d}",
+            'name'      : name,
+            'code'      : f"{market_type.upper()}{i:03d}",
             'pct_change': round(random.uniform(-5.0, 8.0), 2),  # 涨跌幅 -5% 到 8%
-            'volume': random.randint(1000000, 100000000),  # 成交量
-            'amount': random.randint(100000000, 10000000000),  # 成交额
-            'up_count': random.randint(0, 50),  # 上涨家数
+            'volume'    : random.randint(1000000, 100000000),  # 成交量
+            'amount'    : random.randint(100000000, 10000000000),  # 成交额
+            'up_count'  : random.randint(0, 50),  # 上涨家数
             'down_count': random.randint(0, 50),  # 下跌家数
             'flat_count': random.randint(0, 10),  # 平盘家数
         }
