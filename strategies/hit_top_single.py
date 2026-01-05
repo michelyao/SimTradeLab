@@ -15,7 +15,7 @@ def initialize(context):
     g.signal = 0
     g.hit_status = [1, 2]
     is_trade_flag = is_trade()
-    # run_interval(context, interval_handle, seconds=1)
+    run_interval(context, interval_handle, seconds=1)
     if not is_trade_flag:
         set_backtest()  # 设置回测条件
 
@@ -77,8 +77,8 @@ def before_trading_start(context, data):
     g.current_date = context.current_dt.strftime("%Y%m%d")
 
 
-def handle_data(context, data):
-# def interval_handle(context):
+# def handle_data(context, data):
+def interval_handle(context):
     """
     核心轮询主流程。遍历股票池，检测涨停条件，并触发下单。
     优化版本：减少不必要的日志输出，提高执行效率

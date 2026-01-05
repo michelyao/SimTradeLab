@@ -6,6 +6,33 @@
 import json
 import traceback
 from datetime import datetime, timedelta
+LUCK_CODE = 66
+RICH_CODE = 88
+
+
+def unzip_stock_list_from_data():
+    """
+    解压目标 zip 包并读取近一天的股票模块名单 json，异常时返回空列表。
+    """
+    target_dir = "george/"
+    zip_name = "top_three.zip"
+
+    base_path = get_research_path() + target_dir
+
+    yesterday = get_yesterday()
+    json_file = "{}_top_three_module.json".format(yesterday)
+    full_path = base_path + "input_data/" + json_file
+    stock_list = []
+    try:
+        with open(full_path, "r", encoding="utf-8") as f:
+            stock_list = json.load(f)
+    except FileNotFoundError:
+        log.warning("line:{} [json file not found] {}".format(37, full_path))
+    except json.JSONDecodeError as e:
+        log.warning("line:{} [json decode error] {}: {}".format(37, full_path, e))
+    except Exception as e:
+        log.warning("line:{} [read json fail] {}: {}".format(37, full_path, e))
+    return stock_list
 
 
 def get_yesterday():
@@ -146,17 +173,17 @@ def interval_handle(context):
 
                 up_px = infos.get("up_px")
                 last_px = infos.get("last_px")
-                offer_grp = infos.get("offer_grp")
+                bid_grp = infos.get('bid_grp')
 
                 # 提前检查offer_grp是否有效
-                if not offer_grp or len(offer_grp) < 6:
+                if not bid_grp or len(bid_grp) < 6:
                     log.debug(
-                        "line:{} stock {} offer_grp data not available or incomplete".format(
+                        "line:{} stock {} bid_grp data not available or incomplete".format(
                             143, stock))
                     continue
 
                 # 安全地访问第5档数据
-                level_5_data = offer_grp[5]
+                level_5_data = bid_grp[5]
                 if not level_5_data or len(level_5_data) < 2:
                     log.debug(
                         "line:{} stock {} level 5 data incomplete".format(
