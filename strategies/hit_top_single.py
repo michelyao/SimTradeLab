@@ -93,7 +93,6 @@ def interval_handle(context):
     for hit_board_name, stocks in g.fund_list.items():
         for stock in stocks:
             try:
-                stock = stock.upper()
                 limit = check_limit(stock)
                 # 减少DEBUG级别日志输出
                 log.debug(

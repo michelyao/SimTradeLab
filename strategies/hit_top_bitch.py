@@ -6,6 +6,9 @@
 import json
 import traceback
 from datetime import datetime, timedelta
+
+from fontTools.misc.arrayTools import offsetRect
+
 LUCK_CODE = 66
 RICH_CODE = 88
 
@@ -15,7 +18,6 @@ def unzip_stock_list_from_data():
     解压目标 zip 包并读取近一天的股票模块名单 json，异常时返回空列表。
     """
     target_dir = "george/"
-    zip_name = "top_three.zip"
 
     base_path = get_research_path() + target_dir
 
@@ -174,34 +176,35 @@ def interval_handle(context):
                 up_px = infos.get("up_px")
                 last_px = infos.get("last_px")
                 bid_grp = infos.get('bid_grp')
+                offer_grp = infos.get('offer_grp')
 
                 # 提前检查offer_grp是否有效
-                if not bid_grp or len(bid_grp) < 6:
+                if not offer_grp or len(offer_grp) < 6:
                     log.debug(
                         "line:{} stock {} bid_grp data not available or incomplete".format(
                             143, stock))
                     continue
 
                 # 安全地访问第5档数据
-                level_5_data = bid_grp[5]
+                level_5_data = offer_grp[1]
                 if not level_5_data or len(level_5_data) < 2:
                     log.debug(
                         "line:{} stock {} level 5 data incomplete".format(
                             145, stock))
                     continue
 
-                level_5_price, level_5_order = level_5_data[0], level_5_data[1]
+                offer_price, offer_amount = level_5_data[0], level_5_data[1]
 
                 # 简化条件判断
-                if level_5_price == up_px and level_5_order <= 5000:
+                if offer_price == up_px and offer_amount <= 999999:
                     log.info(
-                        "line:{} george下单买入: last_px: {}, level_5_price: {}, stock: "
-                        "{}".format(146, last_px, level_5_price, stock))
+                        "line:{} george下单买入: last_px: {}, offer_price: {}, stock: "
+                        "{}".format(146, last_px, offer_price, stock))
                 else:
                     # 减少未满足条件时的日志输出（改为debug级别）
                     log.debug(
-                        "line:{} george 打板未达到条件: last_px: {}, level_5_price: {}, stock: "
-                        "{}".format(150, last_px, level_5_price, stock))
+                        "line:{} george 打板未达到条件: last_px: {}, offer_amount: {}, stock: "
+                        "{}".format(150, last_px, offer_amount, stock))
 
         except Exception as e:
             # 提供更具体的错误信息
