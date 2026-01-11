@@ -7,8 +7,6 @@ import json
 import traceback
 from datetime import datetime, timedelta
 
-from fontTools.misc.arrayTools import offsetRect
-
 LUCK_CODE = 66
 RICH_CODE = 88
 
@@ -31,7 +29,8 @@ def unzip_stock_list_from_data():
     except FileNotFoundError:
         log.warning("line:{} [json file not found] {}".format(37, full_path))
     except json.JSONDecodeError as e:
-        log.warning("line:{} [json decode error] {}: {}".format(37, full_path, e))
+        log.warning(
+            "line:{} [json decode error] {}: {}".format(37, full_path, e))
     except Exception as e:
         log.warning("line:{} [read json fail] {}: {}".format(37, full_path, e))
     return stock_list
@@ -48,6 +47,14 @@ def initialize(context):
     set_params()
     g.signal = 0
     g.hit_status = [1, 2]
+
+    # 任务1: 初始化状态跟踪存储
+    g.stock_previous_status = {}
+
+    # 任务4: 初始化状态分类存储
+    g.limit1 = set()
+    g.limit2 = set()
+
     is_trade_flag = is_trade()
     run_interval(context, interval_handle, seconds=1)
     if not is_trade_flag:
@@ -173,38 +180,26 @@ def interval_handle(context):
                               "{}".format(129, stock))
                     continue
 
-                up_px = infos.get("up_px")
-                last_px = infos.get("last_px")
-                bid_grp = infos.get('bid_grp')
-                offer_grp = infos.get('offer_grp')
+                # 任务2: 实现状态跟踪逻辑
+                current_status = stock_hit_status
+                previous_status = g.stock_previous_status.get(stock, 0)
+                g.stock_previous_status[stock] = current_status
 
-                # 提前检查offer_grp是否有效
-                if not offer_grp or len(offer_grp) < 6:
-                    log.debug(
-                        "line:{} stock {} bid_grp data not available or incomplete".format(
-                            143, stock))
-                    continue
-
-                # 安全地访问第5档数据
-                level_5_data = offer_grp[1]
-                if not level_5_data or len(level_5_data) < 2:
-                    log.debug(
-                        "line:{} stock {} level 5 data incomplete".format(
-                            145, stock))
-                    continue
-
-                offer_price, offer_amount = level_5_data[0], level_5_data[1]
-
-                # 简化条件判断
-                if offer_price == up_px and offer_amount <= 999999:
+                # 任务3: 实现买入条件判断
+                if previous_status in [0, -1, -2] and current_status == 2:
                     log.info(
-                        "line:{} george下单买入: last_px: {}, offer_price: {}, stock: "
-                        "{}".format(146, last_px, offer_price, stock))
+                        "line:{} George买入条件满足: stock: {}, previous_status: {}, current_status: {}".format(
+                            160, stock, previous_status, current_status))
                 else:
-                    # 减少未满足条件时的日志输出（改为debug级别）
                     log.debug(
-                        "line:{} george 打板未达到条件: last_px: {}, offer_amount: {}, stock: "
-                        "{}".format(150, last_px, offer_amount, stock))
+                        "line:{} George买入条件未满足: stock: {}, previous_status: {}, current_status: {}".format(
+                            163, stock, previous_status, current_status))
+
+                # 任务4: 实现状态分类存储
+                if current_status == 1:
+                    g.limit1.add(stock)
+                elif current_status == 2:
+                    g.limit2.add(stock)
 
         except Exception as e:
             # 提供更具体的错误信息
