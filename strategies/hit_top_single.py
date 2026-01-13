@@ -6,6 +6,9 @@
 import json
 from datetime import datetime, timedelta
 
+MAX_STOCK_NUMBER = 4
+MAX_BUY_AMOUNT = 5000
+
 
 def initialize(context):
     """
@@ -98,31 +101,17 @@ def interval_handle(context):
                 log.debug(
                     "line:{} stock: {} limit: {}".format(98, stock, limit))
 
-                stock_hit_status = get_check_limit_value(limit)
-                if stock_hit_status in g.hit_status:
-                    if g.limit_stock > 3:
-                        # 优化循环控制：达到购买限制时完全退出
-                        log.info(
-                            "line:{} reached buy limit, exit processing.".format(
-                                105))
-                        return
-                    _proc_hit_board(stock)
+                if g.limit_stock > MAX_STOCK_NUMBER:
+                    # 优化循环控制：达到购买限制时完全退出
+                    log.info("line:{} reached buy limit, exit processing."
+                             "".format(105))
+                    return
+                _proc_hit_board(stock)
             except Exception as e:
                 # 减少详细的traceback输出，只记录关键错误信息
                 log.debug(
                     "line:{} Error processing stock {}: {}".format(112, stock,
                                                                    str(e)))
-
-
-def get_check_limit_value(limit):
-    """
-    优化后的函数：直接返回limit字典中的值，避免不必要的遍历
-    如果limit是字典且有值，返回第一个值；否则返回默认值88
-    """
-    if isinstance(limit, dict) and limit:
-        # 返回字典中的第一个值，避免遍历整个字典
-        return next(iter(limit.values()))
-    return 88
 
 
 def _proc_hit_board(stock):
@@ -148,26 +137,25 @@ def _proc_hit_board(stock):
 
         # 验证必要字段存在
         up_px = infos.get("up_px")
-        last_px = infos.get("last_px")
+        bid_grp = infos.get("bid_grp")
         offer_grp = infos.get("offer_grp")
 
-        if up_px is None or last_px is None:
-            log.debug("line:{} Missing required fields for stock {}".format(158,
-                                                                            stock))
+        if up_px is None or bid_grp is None:
+            log.debug("line:{} Missing required fields for stock {}"
+                      "".format(158, stock))
             return
 
         # 验证 offer_grp 数据结构
         if not offer_grp or not isinstance(offer_grp, dict):
             log.debug(
-                "line:{} offer_grp data not available for stock {}".format(163,
-                                                                           stock))
+                "line:{} offer_grp data not available for stock {}"
+                "".format(163, stock))
             return
 
         # 验证第 5 档数据存在
         if 5 not in offer_grp or len(offer_grp[5]) < 2:
-            log.debug(
-                "line:{} offer_grp level 5 data incomplete for stock {}".format(
-                    168, stock))
+            log.debug("line:{} offer_grp level 5 data incomplete for stock {}"
+                      "".format(168, stock))
             return
 
         # 提取第 5 档数据
@@ -177,12 +165,12 @@ def _proc_hit_board(stock):
         # 打板检测
         if level_5_price == up_px and level_5_order <= 5000:
             log.info(
-                "line:{} george下单买入: last_px: {}, level_5_price: {}, stock: {}".format(
-                    177, last_px, level_5_price, stock))
+                "line:{} george下单买入: bid_grp: {}, level_5_price: {}, stock: {}"
+                "".format(177, bid_grp, level_5_price, stock))
         else:
             log.info(
-                "line:{} george 打板未达到条件: last_px: {}, level_5_price: {}, stock: {}".format(
-                    180, last_px, level_5_price, stock))
+                "line:{} george 打板未达到条件: bid_grp: {}, level_5_price: {}, stock: {}"
+                "".format(180, bid_grp, level_5_price, stock))
 
         log.info("line:{} _proc_hit_board end".format(183))
 
