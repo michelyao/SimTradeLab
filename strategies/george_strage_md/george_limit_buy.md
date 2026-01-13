@@ -1,4 +1,4 @@
-在文件E:\P_python\kay\SimTradeLab_old\strategies\hit_limit_single.py中的interval_handle函数中实现以下功能。
+在文件E:\P_python\kay\SimTradeLab_old\strategies\george_omo_limit_single.py中的interval_handle函数中实现以下功能。
 1. 记录每个股票上一次数据来的时候的状态。
     - g.limit1保存check_limit返回状态是1的股票代码。
     - g.limit2保存check_limit返回状态是2的股票代码。
