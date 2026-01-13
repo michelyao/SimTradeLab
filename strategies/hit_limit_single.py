@@ -106,20 +106,23 @@ def interval_handle(context):
         }
 
 
-def _proc_hit_board(stock, last_status, current_status):
+def _proc_hit_board(stock):
     """处理打板买入逻辑"""
     snapshot = get_snapshot(stock)
     if snapshot:
         stock_data = snapshot.get(stock, {})
-        last_px = stock_data.get('last_px', 0)
-        log.info("line:{} george下单买入: last_px: {},  stock: {}".format(146, last_px,  stock))
-        for key in g.fund_list:
-            if stock in g.fund_list[key]:
-                del g.fund_list[key]
-                break
+        up_px = stock_data.get('up_px', 0)
+        if g.limit_stock < 4 and up_px < 50:
+            order_value(stock, 5000)
+            log.info("line:{} george下单买入: up_px: {}, stock: {}".format(146, up_px,  stock))
+            g.limit_stock += 1
+            for key in g.fund_list:
+                if stock in g.fund_list[key]:
+                    g.fund_list[key].remove(stock)
+                    break
 
 
-def _proc_hit_board_debug(stock, last_status, current_status):
+def _proc_hit_board_debug(stock):
     """处理打板条件未达到的情况"""
     snapshot = get_snapshot(stock)
     if snapshot:
