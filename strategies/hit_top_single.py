@@ -18,7 +18,8 @@ def initialize(context):
     g.signal = 0
     g.hit_status = [1, 2]
     is_trade_flag = is_trade()
-    run_interval(context, interval_handle, seconds=1)
+    run_interval(context, interval_handle, seconds=1,
+                 interval_timer_ranges="09:15-11:30,13:00-15:00")
     if not is_trade_flag:
         set_backtest()  # 设置回测条件
 

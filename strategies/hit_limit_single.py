@@ -96,9 +96,9 @@ def interval_handle(context):
             g.limit2.append(stock)
 
         if last_status in [0, -1, -2] and current_status.get(stock) == 2:
-            _proc_hit_board(stock, last_status, current_status)
+            _proc_hit_board(stock)
         else:
-            _proc_hit_board_debug(stock, last_status, current_status)
+            _proc_hit_board_debug(stock)
 
         g.stock_states[stock] = {
             'last_status': current_status,
