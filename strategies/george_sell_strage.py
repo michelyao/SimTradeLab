@@ -36,6 +36,7 @@ def handle_data(context, data):
     try:
         # 获取当前持仓
         positions = context.portfolio.positions
+        log.info("line:{} 持仓{}".format(39, positions))
         if not positions:
             log.info("line:{} 当前无持仓".format(21))
             return
