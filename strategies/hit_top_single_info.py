@@ -19,7 +19,8 @@ def initialize(context):
     g.hit_status = [1, 2]
     is_trade_flag = is_trade()
     run_interval(context, interval_handle, seconds=1,
-                 interval_timer_ranges="09:30-10:30,13:00-13:01")
+                 interval_timer_ranges="09:29-10:30,13:00-13:01")
+    # run_interval(context, interval_handle, seconds=1)
     if not is_trade_flag:
         set_backtest()  # 设置回测条件
 
@@ -98,83 +99,11 @@ def interval_handle(context):
         for stock in stocks:
             try:
                 limit = check_limit(stock)
-                # 减少DEBUG级别日志输出
-                log.debug(
-                    "line:{} stock: {} limit: {}".format(98, stock, limit))
-
-                if g.limit_stock > MAX_STOCK_NUMBER:
-                    # 优化循环控制：达到购买限制时完全退出
-                    log.info("line:{} reached buy limit, exit processing."
-                             "".format(105))
-                    return
-                _proc_hit_board(stock)
+                snapshot = get_snapshot(stock)
+                log.debug("line:{} stock: {} \r\nlimit: {} \r\nsnapshot: {}"
+                          "".format(98, stock, limit, snapshot))
             except Exception as e:
                 # 减少详细的traceback输出，只记录关键错误信息
                 log.debug(
                     "line:{} Error processing stock {}: {}".format(112, stock,
                                                                    str(e)))
-
-
-def _proc_hit_board(stock):
-    """
-    优化版本：按照 get_snapshot 接口规范获取实时行情数据，进行打板检测
-    """
-    log.info("line:{} stock:{} _proc_hit_board start".format(135, stock))
-    try:
-        snapshot = get_snapshot(stock)
-        log.debug("line:{} snapshot {}".format(138, snapshot))
-
-        # 验证快照数据不为空
-        if not snapshot:
-            log.debug(
-                "line:{} snapshot is empty for stock {}".format(142, stock))
-            return
-
-        # 验证股票代码在快照中存在
-        infos = snapshot.get(stock)
-        if infos is None:
-            log.debug("line:{} No snapshot for stock {}".format(149, stock))
-            return
-
-        # 验证必要字段存在
-        up_px = infos.get("up_px")
-        bid_grp = infos.get("bid_grp")
-        offer_grp = infos.get("offer_grp")
-
-        if up_px is None or bid_grp is None:
-            log.debug("line:{} Missing required fields for stock {}"
-                      "".format(158, stock))
-            return
-
-        # 验证 offer_grp 数据结构
-        if not offer_grp or not isinstance(offer_grp, dict):
-            log.debug(
-                "line:{} offer_grp data not available for stock {}"
-                "".format(163, stock))
-            return
-
-        # 验证第 5 档数据存在
-        if 5 not in offer_grp or len(offer_grp[5]) < 2:
-            log.debug("line:{} offer_grp level 5 data incomplete for stock {}"
-                      "".format(168, stock))
-            return
-
-        # 提取第 5 档数据
-        level_5_price = offer_grp[5][0]
-        level_5_order = offer_grp[5][1]
-
-        # 打板检测
-        if level_5_price == up_px and level_5_order <= 5000:
-            log.info(
-                "line:{} george下单买入: bid_grp: {}, level_5_price: {}, stock: {}"
-                "".format(177, bid_grp, level_5_price, stock))
-        else:
-            log.info(
-                "line:{} george 打板未达到条件: bid_grp: {}, level_5_price: {}, stock: {}"
-                "".format(180, bid_grp, level_5_price, stock))
-
-        log.info("line:{} _proc_hit_board end".format(183))
-
-    except Exception as e:
-        log.debug(
-            "line:{} get_snapshot failed for {}: {}".format(186, stock, str(e)))

@@ -11,6 +11,8 @@ def initialize(context):
     log.info("line:{} 初始化A股持仓卖出策略".format(10))
 
     # 策略参数
+    g.approve_list = ['002119.SZ', '600520.SS']  # approve stock list
+
     g.securities = []  # 监控的持仓股票列表
     g.take_profit_threshold = 0.03  # 止盈触发阈值 3%
     g.stop_loss_threshold = -0.03  # 止损触发阈值 -3%
@@ -40,6 +42,9 @@ def handle_data(context, data):
 
         # 遍历所有持仓
         for security in positions:
+            if security not in g.approve_list:
+                continue
+
             if positions[security].amount <= 0:
                 continue
 

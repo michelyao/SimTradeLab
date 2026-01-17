@@ -86,24 +86,27 @@ def interval_handle(context):
     核心轮询主流程。遍历股票池，检测涨停条件，并触发下单。
     优化版本：减少不必要的日志输出，提高执行效率
     """
-    for stock in g.security:
-        current_status = check_limit(stock)
-        last_status = g.stock_states.get(stock, {}).get('last_status', 0)
+    for boards, stocks in g.fund_list.items():
+        for stock in stocks:
+            current_status = check_limit(stock).get(stock)
+            last_status = g.stock_states.get(stock, {}).get('last_status', 0)
 
-        if current_status == 1:
-            g.limit1.append(stock)
-        elif current_status == 2:
-            g.limit2.append(stock)
+            if current_status == 1:
+                g.limit1.append(stock)
+            elif current_status == 2:
+                g.limit2.append(stock)
 
-        if last_status in [0, -1, -2] and current_status.get(stock) == 2:
-            _proc_hit_board(stock)
-        else:
-            _proc_hit_board_debug(stock)
+            log.debug("line:{} last_status: {}, current_status: {}"
+                  "".format(118, last_status, current_status))
+            if last_status in [0, -1, -2] and current_status == 2:
+                _proc_hit_board(stock)
+            else:
+                _proc_hit_board_debug(stock)
 
-        g.stock_states[stock] = {
-            'last_status': current_status,
-            'current_status': current_status
-        }
+            g.stock_states[stock] = {
+                'last_status': current_status,
+                'current_status': current_status
+            }
 
 
 def _proc_hit_board(stock):
@@ -114,7 +117,8 @@ def _proc_hit_board(stock):
         up_px = stock_data.get('up_px', 0)
         if g.limit_stock < 4 and up_px < 50:
             order_value(stock, 5000)
-            log.info("line:{} george下单买入: up_px: {}, stock: {}".format(146, up_px,  stock))
+            log.debug("line:{} george下单买入: up_px: {}, stock: {}"
+                      "".format(118, up_px,  stock))
             g.limit_stock += 1
             for key in g.fund_list:
                 if stock in g.fund_list[key]:
