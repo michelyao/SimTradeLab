@@ -54,6 +54,7 @@ def set_params():
     g.stock_states = {}
     g.limit1 = []
     g.limit2 = []
+    g.buyed = []
 
 
 def set_variables():
@@ -122,6 +123,12 @@ def _proc_hit_board(stock):
     if g.limit_stock >= 4 or up_px >= 50:
         return
 
+    # 检查是否已经买入过
+    if stock in g.buyed:
+        log.debug("line:{} [跳过] stock: {}, 已经买入过"
+                  "".format(113, stock))
+        return
+
     # 检查是否真正涨停（limit_status == 2）
     limit_status = check_limit(stock).get(stock, 0)
     if limit_status != 2:
@@ -149,6 +156,7 @@ def _proc_hit_board(stock):
                  "".format(118, up_px, stock))
         order_value(stock, 5000)
         g.limit_stock += 1
+        g.buyed.append(stock)
         for key in g.fund_list:
             if stock in g.fund_list[key]:
                 g.fund_list[key].remove(stock)
