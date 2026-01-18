@@ -116,7 +116,7 @@ def _proc_hit_board(stock):
         stock_data = snapshot.get(stock, {})
         up_px = stock_data.get('up_px', 0)
         if g.limit_stock < 4 and up_px < 50:
-            order_value(stock, 5000)
+            # order_value(stock, 5000)
             log.debug("line:{} george下单买入: up_px: {}, stock: {}"
                       "".format(118, up_px,  stock))
             g.limit_stock += 1
