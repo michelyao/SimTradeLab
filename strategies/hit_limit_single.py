@@ -110,26 +110,58 @@ def interval_handle(context):
 
 
 def _proc_hit_board(stock):
-    """处理打板买入逻辑"""
+    """处理打板买入逻辑 - 基于量能分析"""
     snapshot = get_snapshot(stock)
-    if snapshot:
-        stock_data = snapshot.get(stock, {})
-        up_px = stock_data.get('up_px', 0)
-        if g.limit_stock < 4 and up_px < 50:
-            # order_value(stock, 5000)
-            log.debug("line:{} george下单买入: up_px: {}, stock: {}"
-                      "".format(118, up_px,  stock))
-            g.limit_stock += 1
-            for key in g.fund_list:
-                if stock in g.fund_list[key]:
-                    g.fund_list[key].remove(stock)
-                    break
+    if not snapshot:
+        return
+
+    stock_data = snapshot.get(stock, {})
+    up_px = stock_data.get('up_px', 0)
+
+    if g.limit_stock >= 4 or up_px >= 50:
+        return
+
+    # 分析买卖方量能
+    bid_grp = stock_data.get('bid_grp', [])
+    offer_grp = stock_data.get('offer_grp', [])
+
+    bid_vol = sum(bid_grp) if bid_grp else 0
+    offer_vol = sum(offer_grp) if offer_grp else 0
+
+    # 买方强度 = 买方量能 / 卖方量能
+    buy_strength = bid_vol / offer_vol if offer_vol > 0 else 0
+
+    log.info("line:{} [量能分析] stock: {}, bid_vol: {}, offer_vol: {}, strength: {:.2f}"
+             "".format(112, stock, bid_vol, offer_vol, buy_strength))
+
+    # 买方强度 > 1.2 时买入
+    if buy_strength > 1.2:
+        log.info("line:{} [买入决策] stock: {}, 买方强, 执行买入"
+                 "".format(115, stock))
+        # order_value(stock, 5000)
+        g.limit_stock += 1
+        for key in g.fund_list:
+            if stock in g.fund_list[key]:
+                g.fund_list[key].remove(stock)
+                break
+    else:
+        log.info("line:{} [买入决策] stock: {}, 买方弱 (strength: {:.2f}), 跳过"
+                 "".format(118, stock, buy_strength))
 
 
 def _proc_hit_board_debug(stock):
-    """处理打板条件未达到的情况"""
+    """处理打板条件未达到的情况 - 记录量能信息"""
     snapshot = get_snapshot(stock)
-    if snapshot:
-        last_px = snapshot.get('last_px', 0)
-        offer_amount = snapshot.get('offer_amount', 0)
-        log.debug("line:{} george 打板未达到条件: last_px: {}, offer_amount: {}, stock: {}".format(150, last_px, offer_amount, stock))
+    if not snapshot:
+        return
+
+    stock_data = snapshot.get(stock, {})
+    bid_grp = stock_data.get('bid_grp', [])
+    offer_grp = stock_data.get('offer_grp', [])
+
+    bid_vol = sum(bid_grp) if bid_grp else 0
+    offer_vol = sum(offer_grp) if offer_grp else 0
+    buy_strength = bid_vol / offer_vol if offer_vol > 0 else 0
+
+    log.debug("line:{} [监控] stock: {}, bid_vol: {}, offer_vol: {}, strength: {:.2f}"
+              "".format(152, stock, bid_vol, offer_vol, buy_strength))
