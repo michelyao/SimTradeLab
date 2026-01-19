@@ -42,50 +42,50 @@ def handle_data(context, data):
             return
 
         # 遍历所有持仓
-        for security in positions:
-            if security not in g.approve_list:
+        for stock in positions.keys():
+            if stock not in g.approve_list:
                 continue
 
-            if positions[security].amount <= 0:
+            if positions[stock].amount <= 0:
                 continue
 
-            current_price = data[security]['close']
-            position = positions[security]
+            current_price = data[stock]['close']
+            stock_info = positions[stock]
 
             # 初始化持仓状态
-            if security not in g.position_state:
-                g.position_state[security] = {
-                    'entry_price': position.avg_cost,
+            if stock not in g.position_state:
+                g.position_state[stock] = {
+                    'cost_basis': stock_info.cost_basis,
                     'sold_ratio': 0,
                     'status': 'holding'
                 }
 
             # 执行卖出逻辑
-            _process_sell_logic(context, security, current_price, position)
+            _process_sell_logic(context, stock, current_price, stock_info)
 
     except Exception as e:
         log.error("line:{} handle_data异常: {}".format(31, e))
 
 
-def _process_sell_logic(context, security, current_price, position):
+def _process_sell_logic(context, stock, current_price, position):
     """处理单只股票的卖出逻辑"""
-    print("line:{} 处理股票 {} 的卖出逻辑".format(34, security))
+    print("line:{} 处理股票 {} 的卖出逻辑".format(34, stock))
 
     # 检查持仓是否满足卖出条件
-    if not _check_position_valid(security, current_price):
+    if not _check_position_valid(stock, current_price):
         return
 
-    entry_price = g.position_state[security]['entry_price']
+    entry_price = g.position_state[stock]['entry_price']
     current_ratio = (current_price - entry_price) / entry_price
 
     # 检查是否触发止盈
     if current_ratio >= g.take_profit_threshold:
-        _handle_take_profit(context, security, current_price, position, current_ratio)
+        _handle_take_profit(context, stock, current_price, position, current_ratio)
         return
 
     # 检查是否触发止损
     if current_ratio <= g.stop_loss_threshold:
-        _handle_stop_loss(context, security, current_price, position, current_ratio)
+        _handle_stop_loss(context, stock, current_price, position, current_ratio)
         return
 
 
