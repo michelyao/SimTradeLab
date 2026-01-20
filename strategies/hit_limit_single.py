@@ -98,14 +98,12 @@ def interval_handle(context):
                 g.limit2.append(stock)
 
             log.debug("line:{} last_status: {}, current_status: {}"
-                  "".format(118, last_status, current_status))
+                      "".format(118, last_status, current_status))
             if last_status in [0, -1, -2] and current_status == 2:
                 _proc_hit_board(stock)
-            else:
-                _proc_hit_board_debug(stock)
 
             g.stock_states[stock] = {
-                'last_status': current_status,
+                'last_status'   : current_status,
                 'current_status': current_status
             }
 
@@ -131,30 +129,36 @@ def _proc_hit_board(stock):
 
     # 检查是否真正涨停（limit_status == 2）
     limit_status = check_limit(stock).get(stock, 0)
-    if limit_status != 2:
+    if limit_status not in [1, 2]:
         log.debug("line:{} [跳过] stock: {}, limit_status: {} (需要==2)"
                   "".format(113, stock, limit_status))
         return
 
+    log.debug("line:{} stock: {} limint {} snapshot {}"
+              "".format(137, stock, limit_status, snapshot))
     # 分析买卖方量能
     bid_grp = stock_data.get('bid_grp', {})
     offer_grp = stock_data.get('offer_grp', {})
 
     # 提取委托量（字典格式，每档是[价格, 委托量, 委托笔数, ...]）
-    bid_vol = sum(v[1] for v in bid_grp.values() if isinstance(v, (list, tuple)) and len(v) > 1) if bid_grp else 0
-    offer_vol = sum(v[1] for v in offer_grp.values() if isinstance(v, (list, tuple)) and len(v) > 1) if offer_grp else 0
+    bid_vol = sum(v[1] for v in bid_grp.values() if
+                  isinstance(v, (list, tuple)) and len(v) > 1) if bid_grp else 0
+    offer_vol = sum(v[1] for v in offer_grp.values() if
+                    isinstance(v, (list, tuple)) and len(
+                        v) > 1) if offer_grp else 0
 
     # 买方强度 = 买方量能 / 卖方量能
     buy_strength = bid_vol / offer_vol if offer_vol > 0 else 0
 
-    log.info("line:{} [量能分析] stock: {}, last_px: {}, up_px: {}, bid_vol: {}, offer_vol: {}, strength: {:.2f}"
-             "".format(112, stock, last_px, up_px, bid_vol, offer_vol, buy_strength))
+    log.info(
+        "line:{} [量能分析] stock: {}, last_px: {}, up_px: {}, bid_vol: {}, offer_vol: {}, strength: {:.2f}"
+        "".format(112, stock, last_px, up_px, bid_vol, offer_vol, buy_strength))
 
     # 只在买方强于卖方时买入
     if bid_vol > offer_vol:
         log.info("line:{} george下单买入: up_px: {}, stock: {}"
                  "".format(118, up_px, stock))
-        order_value(stock, 5000)
+        # order_value(stock, 5000)
         g.limit_stock += 1
         g.buyed.append(stock)
         for key in g.fund_list:
@@ -164,20 +168,3 @@ def _proc_hit_board(stock):
     else:
         log.info("line:{} [买入决策] stock: {}, 买方弱 (bid: {}, offer: {}), 跳过"
                  "".format(118, stock, bid_vol, offer_vol))
-
-
-def _proc_hit_board_debug(stock):
-    """处理打板条件未达到的情况 - 记录量能信息"""
-    snapshot = get_snapshot(stock)
-    if not snapshot:
-        return
-
-    stock_data = snapshot.get(stock, {})
-    bid_grp = stock_data.get('bid_grp', {})
-    offer_grp = stock_data.get('offer_grp', {})
-
-    bid_vol = sum(v[1] for v in bid_grp.values() if isinstance(v, (list, tuple)) and len(v) > 1) if bid_grp else 0
-    offer_vol = sum(v[1] for v in offer_grp.values() if isinstance(v, (list, tuple)) and len(v) > 1) if offer_grp else 0
-
-    log.debug("line:{} [监控] stock: {}, bid_vol: {}, offer_vol: {}"
-              "".format(152, stock, bid_vol, offer_vol))

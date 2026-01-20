@@ -111,11 +111,11 @@ def _check_position_valid(security, current_price):
             log.warning("line:{} 股票 {} 涨跌停".format(61, security))
             return False
 
-        # 检查成交额（防止低流动性）
-        volume = snapshot.get('volume', 0)
-        if volume < 100000:
-            log.warning("line:{} 股票 {} 成交量过低: {}".format(65, security, volume))
-            return False
+        # # 检查成交额（防止低流动性）
+        # volume = snapshot.get('volume', 0)
+        # if volume < 100000:
+        #     log.warning("line:{} 股票 {} 成交量过低: {}".format(65, security, volume))
+        #     return False
 
         # 检查买卖价差
         bid_px = snapshot.get('bid_px', 0)
