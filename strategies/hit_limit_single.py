@@ -97,8 +97,6 @@ def interval_handle(context):
             elif current_status == 2:
                 g.limit2.append(stock)
 
-            log.debug("line:{} last_status: {}, current_status: {}"
-                      "".format(118, last_status, current_status))
             if last_status in [0, -1, -2] and current_status == 2:
                 _proc_hit_board(stock)
 
