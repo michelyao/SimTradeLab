@@ -12,7 +12,6 @@ def initialize(context):
     初始化全局参数与定时主循环。若非实时交易模式，自动设置回测参数。
     """
     set_params()
-    g.signal = 0
     g.hit_status = [1, 2]
     is_trade_flag = is_trade()
     run_interval(context, interval_handle, seconds=1)
@@ -46,15 +45,16 @@ def set_params():
     初始化策略参数，重置持仓计数并加载股票池。
     优化版本：减少重复计算，增加缓存检查
     """
-    g.amount = 100
+    g.MAX_STOCK_NUM = 2
     g.limit_stock = 0
+    g.buyed = []
+
     g.fund_list = read_stock_pool()
     g.security = sum(g.fund_list.values(), []) if g.fund_list else []
     set_universe(g.security)
     g.stock_states = {}
     g.limit1 = []
     g.limit2 = []
-    g.buyed = []
 
 
 def set_variables():
@@ -116,7 +116,7 @@ def _proc_hit_board(stock):
     up_px = stock_data.get('up_px', 0)
     last_px = stock_data.get('last_px', 0)
 
-    if g.limit_stock >= 4 or up_px >= 50:
+    if g.limit_stock >= g.MAX_STOCK_NUM or up_px >= 50:
         return
 
     # 检查是否已经买入过
@@ -156,9 +156,13 @@ def _proc_hit_board(stock):
     if bid_vol > offer_vol:
         log.info("line:{} george下单买入: up_px: {}, stock: {}"
                  "".format(118, up_px, stock))
-        # order_value(stock, 5000)
-        g.limit_stock += 1
-        g.buyed.append(stock)
+        try:
+            order_value(stock, 5000)
+            g.limit_stock += 1
+            g.buyed.append(stock)
+        except Exception as e:
+            log.error("line:{}  {})".format(165, e))
+
         for key in g.fund_list:
             if stock in g.fund_list[key]:
                 g.fund_list[key].remove(stock)
