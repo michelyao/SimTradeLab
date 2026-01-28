@@ -11,7 +11,7 @@ def initialize(context):
     log.info("line:{} 初始化A股持仓卖出策略".format(10))
 
     # 策略参数
-    g.approve_list = ['002119.SZ', '600520.SS']  # approve stock list
+    g.approve_list = []  # approve stock list
 
     g.securities = []  # 监控的持仓股票列表
     g.take_profit_threshold = 0.03  # 止盈触发阈值 3%
@@ -43,8 +43,8 @@ def handle_data(context, data):
 
         # 遍历所有持仓
         for stock in positions.keys():
-            if stock not in g.approve_list:
-                continue
+            # if stock not in g.approve_list:
+            #     continue
 
             if positions[stock].amount <= 0:
                 continue
@@ -468,21 +468,22 @@ def _execute_sell(context, security, amount, reason):
         return
 
     try:
-        order_id = order(security, -amount)
-        if order_id:
-            log.info("line:{} 卖出成功: {} 订单ID: {}".format(370, security, order_id))
-
-            # 记录卖出历史
-            if security not in g.sell_history:
-                g.sell_history[security] = []
-
-            g.sell_history[security].append({
-                'amount': amount,
-                'reason': reason,
-                'timestamp': context.current_dt
-            })
-        else:
-            log.error("line:{} 卖出失败: {}".format(377, security))
+        order_id = 0
+        # order_id = order(security, -amount)
+        # if order_id:
+        #     log.info("line:{} 卖出成功: {} 订单ID: {}".format(370, security, order_id))
+        #
+        #     # 记录卖出历史
+        #     if security not in g.sell_history:
+        #         g.sell_history[security] = []
+        #
+        #     g.sell_history[security].append({
+        #         'amount': amount,
+        #         'reason': reason,
+        #         'timestamp': context.current_dt
+        #     })
+        # else:
+        #     log.error("line:{} 卖出失败: {}".format(377, security))
 
     except Exception as e:
         log.error("line:{} 执行卖出异常: {}".format(380, e))
@@ -495,6 +496,7 @@ def before_trading_start(context, data):
 
 
 def after_trading_end(context, data):
+    return
     """盘后处理"""
     print("line:{} 盘后处理".format(390))
 
