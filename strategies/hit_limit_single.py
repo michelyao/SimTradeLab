@@ -87,32 +87,42 @@ def interval_handle(context):
     核心轮询主流程。遍历股票池，检测涨停条件，并触发下单。
     优化版本：减少不必要的日志输出，提高执行效率
     """
-    for boards, stocks in g.fund_list.items():
-        for stock in stocks:
-            current_status = check_limit(stock).get(stock)
-            last_status = g.stock_states.get(stock, {}).get('last_status', 0)
+    start = datetime.now()
+    while True:
 
-            if current_status == 1:
-                g.limit1.append(stock)
-            elif current_status == 2:
-                g.limit2.append(stock)
+        for boards, stocks in g.fund_list.items():
+            for stock in stocks:
+                current_status = check_limit(stock).get(stock)
+                last_status = g.stock_states.get(stock, {}).get('last_status', 0)
 
-            if last_status in [0, -1, -2] and current_status == 2:
-                _proc_hit_board(stock)
+                if current_status == 1:
+                    g.limit1.append(stock)
+                elif current_status == 2:
+                    g.limit2.append(stock)
 
-            g.stock_states[stock] = {
-                'last_status'   : current_status,
-                'current_status': current_status
-            }
+                if last_status in [0, -1, -2] and current_status == 2:
+                    _proc_hit_board(stock)
+
+                g.stock_states[stock] = {
+                    'last_status'   : current_status,
+                    'current_status': current_status
+                }
+        log.debug("datetime 110")
+        end = datetime.now()
+        if end - start > 2.98:
+            break
 
 
 def _proc_hit_board(stock):
     """处理打板买入逻辑 - 只在limit_status==2且买盘强于卖盘时买入"""
     snapshot = get_snapshot(stock)
-    if not snapshot:
+    stock_data = snapshot.get(stock, {})
+    is_over_time = is_over_limit_time(stock_data)
+
+    if not snapshot or is_over_time:
+        log.debug("return 116")
         return
 
-    stock_data = snapshot.get(stock, {})
     up_px = stock_data.get('up_px', 0)
     last_px = stock_data.get('last_px', 0)
 
@@ -157,9 +167,10 @@ def _proc_hit_board(stock):
         log.info("line:{} george下单买入: up_px: {}, stock: {}"
                  "".format(118, up_px, stock))
         try:
-            order_value(stock, 5000)
-            g.limit_stock += 1
+            order_id = order_value(stock, 11000)
+            log.info("line:{} order_id: {})".format(161, order_id))
             g.buyed.append(stock)
+            g.limit_stock += 1
         except Exception as e:
             log.error("line:{}  {})".format(165, e))
 
@@ -170,3 +181,15 @@ def _proc_hit_board(stock):
     else:
         log.info("line:{} [买入决策] stock: {}, 买方弱 (bid: {}, offer: {}), 跳过"
                  "".format(118, stock, bid_vol, offer_vol))
+
+
+def is_over_limit_time(stock_data):
+    result = False
+    hsTimeStamp = stock_data.get('hsTimeStamp')
+    # 获取今天的日期，固定时间为 10:16:00
+    today = datetime.now().replace(hour=10, minute=16, second=0, microsecond=0)
+    # 生成 17 位数字：年月日时分秒毫秒
+    time_number = today.strftime("%Y%m%d%H%M%S%f")[:17]
+    if int(time_number) < int(hsTimeStamp):
+        result = True
+    return result

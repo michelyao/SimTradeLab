@@ -854,7 +854,7 @@ def get_snapshot(engine: 'BacktestEngine', stock: str) -> Dict[str, Any]:
     Returns:
         dict: 快照数据
     """
-    trade_data_mint_fact = {'hsTimeStamp'                        : 20260106093103000,
+    trade_data_mint_fact = {'hsTimeStamp'                        : 20260423103103000,
                             'trade_mins'                         : 2,
                             'trade_status'                       : 'TRADE',
                             'preclose_px'                        : 18.63,
