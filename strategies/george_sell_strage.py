@@ -4,14 +4,18 @@ A股持仓卖出策略 - George Sell Strategy
 基于动态止盈、MACD止损、分批卖出的完整卖出策略
 """
 
+import pickle
+
 
 def initialize(context):
     """策略初始化"""
-    print("line:{} 初始化A股持仓卖出策略".format(9))
     log.info("line:{} 初始化A股持仓卖出策略".format(10))
+
+    # run_interval(context, interval_handle, seconds=1)
 
     # 策略参数
     g.approve_list = []  # approve stock list
+    g.buy_history_days = 5  # 买入记录保留天数
 
     g.securities = []  # 监控的持仓股票列表
     g.take_profit_threshold = 0.03  # 止盈触发阈值 3%
@@ -25,11 +29,18 @@ def initialize(context):
     # 持仓状态跟踪
     g.position_state = {}  # {stock: {'entry_price': x, 'sold_ratio': 0, 'status': 'holding'}}
     g.sell_history = {}  # 记录卖出历史
+    g.notebook_path = get_research_path()
+    try:
+        with open(g.notebook_path + 'buy_history.pkl', 'rb') as f:
+            g.buy_history = pickle.load(f)
+    except:
+        g.buy_history = {}
 
     log.info("line:{} 止盈阈值: {}%, 止损阈值: {}%".format(13, g.take_profit_threshold*100, abs(g.stop_loss_threshold)*100))
 
 
 def handle_data(context, data):
+# def interval_handle(context):
     """主策略逻辑"""
     print("line:{} handle_data 开始执行".format(18))
 
@@ -42,11 +53,16 @@ def handle_data(context, data):
             return
 
         # 遍历所有持仓
+        yesterday = get_trading_day(-1)
         for stock in positions.keys():
             # if stock not in g.approve_list:
             #     continue
 
             if positions[stock].amount <= 0:
+                continue
+
+            # 只监控昨日买入的股票
+            if yesterday not in g.buy_history.get(stock, []):
                 continue
 
             current_price = data[stock]['close']
@@ -485,6 +501,8 @@ def _execute_sell(context, security, amount, reason):
         # else:
         #     log.error("line:{} 卖出失败: {}".format(377, security))
 
+
+        log.info("line:{} 卖出成功: {}".format(370, security))
     except Exception as e:
         log.error("line:{} 执行卖出异常: {}".format(380, e))
 
@@ -496,10 +514,29 @@ def before_trading_start(context, data):
 
 
 def after_trading_end(context, data):
-    return
-    """盘后处理"""
-    print("line:{} 盘后处理".format(390))
-
+    """盘后处理 - 记录当日买入"""
+    # 获取当日成交并记录买入
+    trades = get_trades()
+    for trade in trades:
+        if trade.business_direction == '买入':
+            security = trade.security
+            if security not in g.buy_history:
+                g.buy_history[security] = []
+            if context.current_date not in g.buy_history[security]:
+                g.buy_history[security].append(context.current_date)
+    
+    # 清理过期记录（保留最近N天）
+    trade_days = get_trade_days(context.current_date, g.buy_history_days)
+    valid_days = set(trade_days)
+    g.buy_history = {k: [d for d in v if d in valid_days] for k, v in g.buy_history.items()}
+    g.buy_history = {k: v for k, v in g.buy_history.items() if v}
+    
+    # 保存
+    with open(g.notebook_path + 'buy_history.pkl', 'wb') as f:
+        pickle.dump(g.buy_history, f, -1)
+    
+    log.info("买入记录已保存: {}".format(g.buy_history))
+    
     total_value = context.portfolio.total_value
     cash = context.portfolio.cash
 
