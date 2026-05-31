@@ -45,7 +45,7 @@ def set_params():
     初始化策略参数，重置持仓计数并加载股票池。
     优化版本：减少重复计算，增加缓存检查
     """
-    g.MAX_STOCK_NUM = 1
+    g.MAX_STOCK_NUM = 2
     g.limit_stock = 0
     g.buyed = []
 
@@ -87,23 +87,33 @@ def interval_handle(context):
     核心轮询主流程。遍历股票池，检测涨停条件，并触发下单。
     优化版本：减少不必要的日志输出，提高执行效率
     """
-    for boards, stocks in g.fund_list.items():
-        for stock in stocks:
-            current_status = check_limit(stock).get(stock)
-            last_status = g.stock_states.get(stock, {}).get('last_status', 0)
+    count = 1
+    start = datetime.now()
+    while True:
+        if g.limit_stock >= g.MAX_STOCK_NUM:
+            break
+        for boards, stocks in g.fund_list.items():
+            for stock in stocks:
+                current_status = check_limit(stock).get(stock)
+                last_status = g.stock_states.get(stock, {}).get('last_status',
+                                                                0)
 
-            if current_status == 1:
-                g.limit1.append(stock)
-            elif current_status == 2:
-                g.limit2.append(stock)
+                if current_status == 1:
+                    g.limit1.append(stock)
+                elif current_status == 2:
+                    g.limit2.append(stock)
 
-            if last_status in [0, -1, -2] and current_status == 2:
-                _proc_hit_board(stock)
+                if last_status in [0, -1, -2] and current_status == 2:
+                    _proc_hit_board(stock)
 
-            g.stock_states[stock] = {
-                'last_status'   : current_status,
-                'current_status': current_status
-            }
+                g.stock_states[stock] = {
+                    'last_status'   : current_status,
+                    'current_status': current_status
+                }
+        end = datetime.now()
+        count += 1
+        if (end - start).total_seconds() > 2.98:
+            break
 
 
 def _proc_hit_board(stock):
@@ -156,12 +166,12 @@ def _proc_hit_board(stock):
         "".format(112, stock, last_px, up_px, bid_vol, offer_vol, buy_strength))
 
     # 只在买方强于卖方时买入
-    # if bid_vol > offer_vol:
-    if 1:
+    if bid_vol > offer_vol:
+        # if 1:
         log.info("line:{} george下单买入: up_px: {}, stock: {}"
                  "".format(118, up_px, stock))
         try:
-            order_id = order_value(stock, 13000)
+            order_id = order_value(stock, 5000)
             log.info("line:{} order_id: {})".format(161, order_id))
             g.buyed.append(stock)
             g.limit_stock += 1

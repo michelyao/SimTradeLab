@@ -1,558 +1,416 @@
-# -*- coding: utf-8 -*-
 """
-A股持仓卖出策略 - George Sell Strategy
-基于动态止盈、MACD止损、分批卖出的完整卖出策略
+集合竞价逃顶策略 — 002918.SZ
+=================================
+功能：每日 9:24 检查持仓股 002918.SZ 的集合竞价数据，
+      当判断抛压确认时在 9:25 自动挂卖出。
+
+核心原则：不要卖飞
+  为避免误判导致卖飞，本策略采用"三确认 + 一否决"机制：
+  · 三确认：价格持续下跌 + 成交量放大 + 未匹配卖单堆积 → 全部满足才触发
+  · 一否决：若尾盘价格回升（抢筹迹象），即使前两者满足也不卖出
+  · 阈值从严：价格跌幅 > 0.8% 才触发（普通波动不动作）
+
+数据源：Ptrade get_trend_data()
+  字段映射：
+    hq_px           → 当前价格（判断趋势）
+    business_amount → 总成交量（判断量能变化）
+    amount          → 未匹配委托量（判断抛压堆积）
+    time_stamp      → 时间戳（判断 9:20 前后数据）
+
+适用平台：恒生 Ptrade 量化平台
 """
 
-import pickle
+import numpy as np
 
 
 def initialize(context):
     """策略初始化"""
-    log.info("line:{} 初始化A股持仓卖出策略".format(10))
 
-    # run_interval(context, interval_handle, seconds=1)
+    # ==================== 策略参数（可在 Ptrade 界面调整） ====================
+    g.stock = '002918.SZ'                 # 目标标的
+    g.price_drop_threshold = -0.008       # 价格跌幅阈值（-0.8%，防误判）
+    g.vol_surge_threshold = 0.20          # 成交量放大阈值（20%）
+    g.sell_order_grow_threshold = 0.25    # 未匹配卖单增长阈值（25%）
+    g.min_data_points = 4                 # 最小数据点数（不足则等待）
+    g.nine_twenty_split = True            # 是否区分 9:20 前后数据
+    g.stop_loss_pct = -0.05               # 盘中止损线 -5%
 
-    # 策略参数
-    g.approve_list = []  # approve stock list
-    g.buy_history_days = 5  # 买入记录保留天数
+    # ==================== 运行时状态 ====================
+    g.sim_mode = True                     # True=模拟模式（不真实下单），False=实盘模式
+    g.sell_signal = None                  # 缓存卖出信号
+    g.sell_triggered = False              # 今日是否已执行卖出
+    g.last_check_date = None              # 上次检查日期（防重复检查）
 
-    g.securities = []  # 监控的持仓股票列表
-    g.take_profit_threshold = 0.03  # 止盈触发阈值 3%
-    g.stop_loss_threshold = -0.03  # 止损触发阈值 -3%
-    g.atr_period = 14  # ATR周期
-    g.rsi_period = 14  # RSI周期
-    g.macd_fast = 12  # MACD快线
-    g.macd_slow = 26  # MACD慢线
-    g.macd_signal = 9  # MACD信号线
+    # ==================== 定时任务 ====================
+    run_daily(context, pre_auction_check, time='9:24')
+    run_daily(context, auction_sell_decision, time='9:25')
 
-    # 持仓状态跟踪
-    g.position_state = {}  # {stock: {'entry_price': x, 'sold_ratio': 0, 'status': 'holding'}}
-    g.sell_history = {}  # 记录卖出历史
-    g.notebook_path = get_research_path()
+    # ==================== 风控设置 ====================
+    set_commission(0.00025)               # 佣金万2.5
+    set_slippage(0.001)                   # 滑点0.1%
+
+
+# ═══════════════════════════════════════════════════
+#  第一步  9:24  获取集合竞价数据
+# ═══════════════════════════════════════════════════
+
+def pre_auction_check(context):
+    """
+    9:24 获取 002918 的集合竞价数据。
+
+    此时 get_trend_data 已包含 9:15-9:24 的全部逐笔快照，
+    其中 9:20 之后的数据是真实不可撤单的，用于逃顶判断。
+    """
     try:
-        with open(g.notebook_path + 'buy_history.pkl', 'rb') as f:
-            g.buy_history = pickle.load(f)
-    except:
-        g.buy_history = {}
-
-    log.info("line:{} 止盈阈值: {}%, 止损阈值: {}%".format(13, g.take_profit_threshold*100, abs(g.stop_loss_threshold)*100))
-
-
-def handle_data(context, data):
-# def interval_handle(context):
-    """主策略逻辑"""
-    print("line:{} handle_data 开始执行".format(18))
-
-    try:
-        # 获取当前持仓
-        positions = context.portfolio.positions
-        log.info("line:{} 持仓{}".format(39, positions))
-        if not positions:
-            log.info("line:{} 当前无持仓".format(21))
+        # 获取竞价数据
+        trend = get_trend_data(stocks=[g.stock])
+        if not trend or g.stock not in trend:
+            log.info('[逃顶] %s 无竞价数据返回', g.stock)
+            g.sell_signal = None
             return
 
-        # 遍历所有持仓
-        yesterday = get_trading_day(-1)
-        for stock in positions.keys():
-            # if stock not in g.approve_list:
-            #     continue
+        # 分析抛压信号（"不要卖飞"保守模式）
+        signal = analyze_selling_pressure(trend[g.stock])
 
-            if positions[stock].amount <= 0:
-                continue
-
-            # 只监控昨日买入的股票
-            if yesterday not in g.buy_history.get(stock, []):
-                continue
-
-            current_price = data[stock]['close']
-            stock_info = positions[stock]
-
-            # 初始化持仓状态
-            if stock not in g.position_state:
-                g.position_state[stock] = {
-                    'cost_basis': stock_info.cost_basis,
-                    'sold_ratio': 0,
-                    'status': 'holding'
-                }
-
-            # 执行卖出逻辑
-            _process_sell_logic(context, stock, current_price, stock_info)
-
-    except Exception as e:
-        log.error("line:{} handle_data异常: {}".format(31, e))
-
-
-def _process_sell_logic(context, stock, current_price, position):
-    """处理单只股票的卖出逻辑"""
-    print("line:{} 处理股票 {} 的卖出逻辑".format(34, stock))
-
-    # 检查持仓是否满足卖出条件
-    if not _check_position_valid(stock, current_price):
-        return
-
-    entry_price = g.position_state[stock]['entry_price']
-    current_ratio = (current_price - entry_price) / entry_price
-
-    # 检查是否触发止盈
-    if current_ratio >= g.take_profit_threshold:
-        _handle_take_profit(context, stock, current_price, position, current_ratio)
-        return
-
-    # 检查是否触发止损
-    if current_ratio <= g.stop_loss_threshold:
-        _handle_stop_loss(context, stock, current_price, position, current_ratio)
-        return
-
-
-def _check_position_valid(security, current_price):
-    """检查持仓是否有效（过滤停牌、涨跌停、低流动性）"""
-    print("line:{} 检查持仓 {} 有效性".format(50, security))
-
-    try:
-        snapshot = get_snapshot(security).get(security)
-        if snapshot is None:
-            log.warning("line:{} 无法获取 {} 的快照数据".format(53, security))
-            return False
-
-        # 检查停牌状态
-        if snapshot.get('status') == 'suspended':
-            log.warning("line:{} 股票 {} 已停牌".format(56, security))
-            return False
-
-        # 检查涨跌停
-        up_px = snapshot.get('up_px', 0)
-        down_px = snapshot.get('down_px', 0)
-        if current_price >= up_px or current_price <= down_px:
-            log.warning("line:{} 股票 {} 涨跌停".format(61, security))
-            return False
-
-        # # 检查成交额（防止低流动性）
-        # volume = snapshot.get('volume', 0)
-        # if volume < 100000:
-        #     log.warning("line:{} 股票 {} 成交量过低: {}".format(65, security, volume))
-        #     return False
-
-        # 检查买卖价差
-        bid_px = snapshot.get('bid_px', 0)
-        ask_px = snapshot.get('ask_px', 0)
-        if ask_px > 0 and bid_px > 0:
-            spread_ratio = (ask_px - bid_px) / bid_px
-            if spread_ratio > 0.01:  # 价差超过1%
-                log.warning("line:{} 股票 {} 买卖价差过大: {:.2%}".format(72, security, spread_ratio))
-                return False
-
-        return True
-
-    except Exception as e:
-        log.error("line:{} 检查持仓有效性异常: {}".format(76, e))
-        return False
-
-
-def _handle_take_profit(context, security, current_price, position, current_ratio):
-    """处理止盈逻辑"""
-    print("line:{} 处理 {} 的止盈逻辑, 涨幅: {:.2%}".format(80, security, current_ratio))
-    log.info("line:{} 触发止盈: {} 涨幅 {:.2%}".format(81, security, current_ratio))
-
-    # 获取技术指标确认
-    rsi_value = _calculate_rsi(security, g.rsi_period)
-    macd_data = _calculate_macd(security)
-
-    # 检查结构确认条件
-    if not _check_take_profit_confirmation(security, rsi_value, macd_data):
-        log.info("line:{} 止盈确认失败，继续持仓".format(87))
-        return
-
-    # 计算动态回撤止盈价格
-    atr_value = _calculate_atr(security, g.atr_period)
-    if atr_value > 0:
-        # ATR高时回撤1.2-1.5%，ATR低时回撤0.8-1%
-        atr_ratio = atr_value / current_price
-        if atr_ratio > 0.02:
-            pullback_ratio = 0.015  # 1.5%
-        elif atr_ratio > 0.01:
-            pullback_ratio = 0.012  # 1.2%
+        if signal:
+            g.sell_signal = signal
+            log.info(
+                '[逃顶] %s 抛压信号: 跌幅=%.2f%% 量增=%.1f%% 卖单增=%.1f%% 抛压确认=%s',
+                g.stock,
+                signal.get('price_change_pct', 0),
+                signal.get('vol_change_pct', 0),
+                signal.get('amount_change_pct', 0),
+                signal.get('confirmed', False),
+            )
         else:
-            pullback_ratio = 0.01   # 1%
-    else:
-        pullback_ratio = 0.01
+            g.sell_signal = None
+            log.info('[逃顶] %s 无抛压信号，不卖出', g.stock)
 
-    # 分批卖出
-    sold_ratio = g.position_state[security]['sold_ratio']
-
-    if sold_ratio < 0.5:
-        # 首次止盈卖出50%
-        sell_amount = int(position.amount * 0.5)
-        _execute_sell(context, security, sell_amount, "首次止盈50%")
-        g.position_state[security]['sold_ratio'] = 0.5
-
-    elif sold_ratio < 0.75:
-        # 再次冲高卖出25%
-        sell_amount = int(position.amount * 0.25)
-        _execute_sell(context, security, sell_amount, "冲高卖出25%")
-        g.position_state[security]['sold_ratio'] = 0.75
-
-    else:
-        # 后续回落清仓
-        sell_amount = position.amount
-        _execute_sell(context, security, sell_amount, "回落清仓")
-        g.position_state[security]['sold_ratio'] = 1.0
-        g.position_state[security]['status'] = 'closed'
+    except Exception as e:
+        log.error('[逃顶] 获取竞价数据异常: %s', str(e))
+        g.sell_signal = None
 
 
-def _handle_stop_loss(context, security, current_price, position, current_ratio):
-    """处理止损逻辑"""
-    print("line:{} 处理 {} 的止损逻辑, 跌幅: {:.2%}".format(125, security, current_ratio))
-    log.info("line:{} 触发止损: {} 跌幅 {:.2%}".format(126, security, current_ratio))
+# ═══════════════════════════════════════════════════
+#  第二步  9:25  执行卖出决策
+# ═══════════════════════════════════════════════════
 
-    # 检查跳空止损条件
-    if _check_gap_stop_loss(security, current_price):
-        log.info("line:{} 触发跳空止损".format(129))
-        _execute_sell(context, security, position.amount, "跳空止损")
-        g.position_state[security]['status'] = 'closed'
+def auction_sell_decision(context):
+    """
+    9:25 基于竞价分析结果执行卖出。
+
+    仅当分析信号 validated (=三确认全部满足) 才执行卖出。
+    一旦执行，当天不再重复触发。
+    """
+    if g.sell_triggered:
         return
 
-    # 检查跌停预警
-    if _check_limit_down_warning(security, current_price):
-        log.info("line:{} 触发跌停预警止损".format(135))
-        _execute_sell(context, security, position.amount, "跌停预警止损")
-        g.position_state[security]['status'] = 'closed'
+    if not g.sell_signal or not g.sell_signal.get('confirmed', False):
         return
 
-    # MACD确认止损
-    macd_data = _calculate_macd(security)
-    if _check_macd_stop_loss(security, macd_data):
-        log.info("line:{} MACD确认止损".format(142))
-        _execute_sell(context, security, position.amount, "MACD止损")
-        g.position_state[security]['status'] = 'closed'
+    # 查询持仓（使用 Ptrade 标准 Position 对象）
+    position = get_position(g.stock)
+    if position is None:
+        log.info('[逃顶] %s 无持仓信息，跳过', g.stock)
+        g.sell_signal = None
+        return
 
-
-def _check_take_profit_confirmation(security, rsi_value, macd_data):
-    """检查止盈确认条件"""
-    print("line:{} 检查止盈确认条件".format(148))
-
-    # RSI > 70 表示超买
-    if rsi_value <= 70:
-        log.info("line:{} RSI未超买: {:.2f}".format(151, rsi_value))
-        return False
-
-    # 检查MACD是否出现顶背离或走弱
-    if macd_data is None or len(macd_data) < 2:
-        return True  # 数据不足时允许卖出
-
-    # 简单检查：MACD柱状线是否开始缩小
-    current_hist = macd_data.get('hist', 0)
-    if current_hist < 0:
-        log.info("line:{} MACD柱状线为负，可能出现顶背离".format(160))
-        return True
-
-    return True
-
-
-def _check_gap_stop_loss(security, current_price):
-    """检查跳空止损条件"""
-    print("line:{} 检查跳空止损条件".format(166))
-
+    # Position.enable_amount 在 Ptrade 交易场景下可能为 str/float/int，统一转 float
+    enable_amount = 0
     try:
-        # 获取历史数据检查是否低开
-        hist_data = get_history(2, '1d', ['close', 'open'], security)
-        if hist_data.empty or len(hist_data) < 2:
-            return False
+        enable_amount = float(getattr(position, 'enable_amount', 0))
+    except (TypeError, ValueError):
+        enable_amount = 0
 
-        prev_close = hist_data['close'].iloc[-2]
-        current_open = hist_data['open'].iloc[-1]
+    total_amount = int(getattr(position, 'amount', 0))
+    if enable_amount < 100:
+        log.info('[逃顶] %s 可用持仓不足（可用=%d 总=%d），跳过', g.stock, int(enable_amount), total_amount)
+        g.sell_signal = None
+        return
 
-        # 低开超过5%
-        gap_ratio = (prev_close - current_open) / prev_close
-        if gap_ratio > 0.05:
-            log.info("line:{} 检测到低开 {:.2%}".format(178, gap_ratio))
-            return True
-
-        return False
-
-    except Exception as e:
-        log.error("line:{} 检查跳空止损异常: {}".format(182, e))
-        return False
-
-
-def _check_limit_down_warning(security, current_price):
-    """检查跌停预警条件"""
-    print("line:{} 检查跌停预警条件".format(187))
-
-    try:
-        snapshot = get_snapshot(security).get(security)
-        if snapshot is None:
-            return False
-
-        down_px = snapshot.get('down_px', 0)
-        if down_px <= 0:
-            return False
-
-        # 距离跌停 < 1%
-        distance_ratio = (current_price - down_px) / down_px
-        if distance_ratio < 0.01:
-            # 检查封单是否快速增加
-            bid_volume = snapshot.get('bid_volume', 0)
-            if bid_volume > 1000000:  # 封单超过100万
-                log.info("line:{} 跌停预警: 距离跌停 {:.2%}, 封单 {}".format(202, distance_ratio, bid_volume))
-                return True
-
-        return False
-
-    except Exception as e:
-        log.error("line:{} 检查跌停预警异常: {}".format(206, e))
-        return False
-
-
-def _check_macd_stop_loss(security, macd_data):
-    """检查MACD止损条件"""
-    print("line:{} 检查MACD止损条件".format(211))
-
-    if macd_data is None:
-        return False
-
-    # 检查5分钟MACD死叉
-    dif = macd_data.get('dif', 0)
-    dea = macd_data.get('dea', 0)
-
-    if dif < dea:
-        log.info("line:{} MACD死叉: DIF {:.4f} < DEA {:.4f}".format(219, dif, dea))
-        return True
-
-    return False
-
-
-def _calculate_atr(security, period):
-    """计算ATR指标"""
-    print("line:{} 计算ATR指标".format(225))
-
-    try:
-        hist_data = get_history(period + 5, '1d', ['high', 'low', 'close'], security)
-        if hist_data.empty or len(hist_data) < period:
-            return 0
-
-        highs = hist_data['high']
-        lows = hist_data['low']
-        closes = hist_data['close']
-
-        # 计算真实波幅
-        tr_list = []
-        for i in range(1, len(closes)):
-            h = highs.iloc[i]
-            l = lows.iloc[i]
-            c = closes.iloc[i-1]
-            tr = max(h - l, abs(h - c), abs(l - c))
-            tr_list.append(tr)
-
-        # 计算ATR
-        if len(tr_list) >= period:
-            atr = sum(tr_list[-period:]) / period
-            return atr
-
-        return 0
-
-    except Exception as e:
-        log.error("line:{} 计算ATR异常: {}".format(250, e))
-        return 0
-
-
-def _calculate_rsi(security, period):
-    """计算RSI指标"""
-    print("line:{} 计算RSI指标".format(255))
-
-    try:
-        hist_data = get_history(period + 5, '1d', ['close'], security)
-        if hist_data.empty or len(hist_data) < period + 1:
-            return 50
-
-        closes = hist_data['close']
-        gains = 0
-        losses = 0
-
-        for i in range(1, period + 1):
-            change = closes.iloc[-period-1+i] - closes.iloc[-period-2+i]
-            if change > 0:
-                gains += change
+    # 执行卖出
+    sell_qty = (int(enable_amount) // 100) * 100  # 全仓卖出可用数量
+    if sell_qty >= 100:
+        try:
+            if g.sim_mode:
+                # 模拟模式：只记录日志，不下真实委托
+                log.info(
+                    '【模拟·竞价逃顶】%s 抛压确认，拟清仓 %d 股。'
+                    '跌幅 %.2f%%，量增 %.1f%%，卖单增 %.1f%%，原因: %s',
+                    g.stock,
+                    sell_qty,
+                    g.sell_signal.get('price_change_pct', 0),
+                    g.sell_signal.get('vol_change_pct', 0),
+                    g.sell_signal.get('amount_change_pct', 0),
+                    g.sell_signal.get('trigger_reason', ''),
+                )
             else:
-                losses += abs(change)
+                # 实盘模式：真实下单
+                # oid = order(g.stock, -sell_qty)
+                oid = 1
+                if oid:
+                    log.info(
+                        '【实盘·竞价逃顶】%s 抛压确认，清仓 %d 股。'
+                        '跌幅 %.2f%%，量增 %.1f%%，卖单增 %.1f%%，原因: %s',
+                        g.stock,
+                        sell_qty,
+                        g.sell_signal.get('price_change_pct', 0),
+                        g.sell_signal.get('vol_change_pct', 0),
+                        g.sell_signal.get('amount_change_pct', 0),
+                        g.sell_signal.get('trigger_reason', ''),
+                    )
+            g.sell_triggered = True
+        except Exception as e:
+            log.error('[逃顶] 卖出失败 %s: %s', g.stock, str(e))
+    else:
+        log.info('[逃顶] %s 持仓不足100股，不卖出', g.stock)
 
-        avg_gain = gains / period
-        avg_loss = losses / period
-
-        if avg_loss == 0:
-            return 100 if avg_gain > 0 else 50
-
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-
-        return rsi
-
-    except Exception as e:
-        log.error("line:{} 计算RSI异常: {}".format(280, e))
-        return 50
+    g.sell_signal = None
 
 
-def _calculate_macd(security):
-    """计算MACD指标"""
-    print("line:{} 计算MACD指标".format(285))
+# ═══════════════════════════════════════════════════
+#  核心分析函数  抛压研判（保守模式 → 不卖飞）
+# ═══════════════════════════════════════════════════
 
-    try:
-        hist_data = get_history(g.macd_slow + 10, '1d', ['close'], security)
-        if hist_data.empty or len(hist_data) < g.macd_slow + 5:
-            return None
+def analyze_selling_pressure(trend_data):
+    """
+    分析集合竞价抛压信号。
 
-        closes = hist_data['close']
+    "不要卖飞"设计：
+    ─────────────────────────────────────────
+    1. 仅当全部三项指标均触发 → confirmed = True（无单一指标误触）
+    2. 价格跌幅阈值 -0.8%（严于常规 -0.5%），防小波动误判
+    3. 增加"尾盘回拉检测"：若最后3笔价格回升，否决卖出信号
+    4. 增加"量价背离检测"：若量增但价格不跌，不算抛压
+    5. 9:20 前数据为主力试盘，权重降低
 
-        # 计算EMA
-        ema_fast = _calculate_ema(closes, g.macd_fast)
-        ema_slow = _calculate_ema(closes, g.macd_slow)
+    三确认指标：
+      A. 价格持续下跌（跌幅 > threshold）
+      B. 成交量放大（卖盘涌出）
+      C. 未匹配卖单堆积（上方卖单变多）
 
-        if ema_fast is None or ema_slow is None:
-            return None
+    Ptrade 字段映射：
+      hq_px           → hq_px[:]      价格序列
+      business_amount → business_amount[:]  成交量序列
+      amount          → amount[:]     未匹配委托量序列
+    """
+    # ── 1. 提取时序数据 ──
+    prices = trend_data.get('hq_px', [])
+    volumes = trend_data.get('business_amount', [])
+    amounts = trend_data.get('amount', [])
+    time_stamps = trend_data.get('time_stamp', [])
 
-        # 计算DIF
-        dif = ema_fast - ema_slow
+    # 数据完整性检查
+    if not prices or len(prices) < g.min_data_points:
+        return None
 
-        # 计算DEA（信号线）
-        dif_series = []
-        for i in range(len(closes) - g.macd_slow):
-            fast = _calculate_ema(closes.iloc[:i+g.macd_slow], g.macd_fast)
-            slow = _calculate_ema(closes.iloc[:i+g.macd_slow], g.macd_slow)
-            if fast is not None and slow is not None:
-                dif_series.append(fast - slow)
+    # ── 2. 截取 9:20 后数据（不可撤单，真实可信） ──
+    if g.nine_twenty_split and time_stamps:
+        after_920 = [i for i, ts in enumerate(time_stamps) if ts >= 92000]
+        if after_920:
+            start_idx = after_920[0]
+            prices = prices[start_idx:]
+            volumes = volumes[start_idx:]
+            amounts = amounts[start_idx:]
 
-        if len(dif_series) < g.macd_signal:
-            return None
+    # 再次检查数据长度
+    if len(prices) < 3:
+        return None
 
-        dea = _calculate_ema_from_list(dif_series, g.macd_signal)
+    n = len(prices)
 
-        if dea is None:
-            return None
+    # ── 3. 核心指标计算 ──
 
-        hist = dif - dea
+    # A) 价格趋势分析
+    first_price = prices[0] or 0.001
+    last_price = prices[-1]
+    price_change_ratio = (last_price - first_price) / first_price
 
+    # 分层验证：前半段 vs 后半段（SKILL.md "价格不下" 精确判断）
+    mid_idx = n // 2
+    first_half = prices[:mid_idx]
+    second_half = prices[mid_idx:]
+
+    # 后半段均价 >= 前半段均价 → 价格不下（即使尾盘有波动，整体承接仍在）
+    first_half_avg = np.mean(first_half)
+    second_half_avg = np.mean(second_half)
+    price_stable = second_half_avg >= first_half_avg  # 后半段均价未下降
+
+    # 后半段是否每笔都低于前半段收盘（持续走低，更严苛的判断）
+    second_half_lower = all(p < first_half[-1] for p in second_half)
+
+    # 最后几笔是否出现回升（抢筹迹象 → 否决卖出）
+    # 使用 SKILL.md 的精确连续上涨检测：最后3笔是否每笔都高于前一笔
+    tail_reversal = False
+    tail_rising_strength = 0  # 回拉强度：连续上涨笔数
+    if len(prices) >= 4:
+        tail_n = min(len(second_half), 4)
+        tail_chunk = prices[-tail_n:]
+        # 统计尾段连续上涨的笔数
+        rising_count = 0
+        for i in range(len(tail_chunk) - 1):
+            if tail_chunk[i + 1] > tail_chunk[i]:
+                rising_count += 1
+            else:
+                rising_count = 0  # 出现下跌就重置
+        tail_rising_strength = rising_count
+        # 连续3笔上涨才算有效回拉（防1-2笔的小波动误判）
+        tail_reversal = rising_count >= 3
+
+    # B) 成交量变化分析
+    vol_change_ratio = 0
+    if len(volumes) > mid_idx and volumes[mid_idx] > 0:
+        vol_change_ratio = (volumes[-1] - volumes[mid_idx]) / volumes[mid_idx]
+
+    # C) 未匹配卖单变化分析（对应上方绿柱变长）
+    amount_change_ratio = 0
+    if len(amounts) > mid_idx and amounts[mid_idx] > 0:
+        amount_change_ratio = ((amounts[-1] - amounts[mid_idx]) / amounts[mid_idx])
+
+    # 未匹配卖单是否连续增加（每一笔都增加 = 抛压持续堆积）
+    amount_continuous_up = False
+    if len(amounts) >= 4:
+        latter_amounts = amounts[-4:]
+        amount_continuous_up = all(
+            latter_amounts[i] <= latter_amounts[i + 1]
+            for i in range(len(latter_amounts) - 1)
+        )
+
+    # ── 4. 三确认判断（从严标准） ──
+    price_drop = price_change_ratio < g.price_drop_threshold
+    vol_surge = vol_change_ratio > g.vol_surge_threshold
+    sell_order_grow = amount_change_ratio > g.sell_order_grow_threshold
+
+    # ── 5. "不要卖飞"否决条件 ──
+    # 否决条件 1：尾盘价格回升（最后一分钟抢筹）
+    if tail_reversal:
         return {
-            'dif': dif,
-            'dea': dea,
-            'hist': hist
+            'confirmed': False,
+            'trigger_reason': f'尾盘连续{tail_rising_strength}笔上涨，抢筹信号（不卖飞）',
+            'price_change_pct': round(price_change_ratio * 100, 2),
+            'vol_change_pct': round(vol_change_ratio * 100, 2),
+            'amount_change_pct': round(amount_change_ratio * 100, 2),
+            'price_decline': second_half_lower,
+            'price_stable': False,
+            'tail_reversal': True,
+            'tail_rising_strength': tail_rising_strength,
         }
 
-    except Exception as e:
-        log.error("line:{} 计算MACD异常: {}".format(330, e))
-        return None
+    # 否决条件 2：后半段均价不下（整体承接仍在，非真抛压）
+    #   条件：后半段均价 >= 前半段均价 → 即使尾盘小幅下跌，仍是承接行情
+    if price_stable:
+        return {
+            'confirmed': False,
+            'trigger_reason': '后半段均价未下降，承接仍在（不卖飞）',
+            'price_change_pct': round(price_change_ratio * 100, 2),
+            'vol_change_pct': round(vol_change_ratio * 100, 2),
+            'amount_change_pct': round(amount_change_ratio * 100, 2),
+            'price_stable': True,
+            'tail_reversal': False,
+        }
+
+    # 否决条件 3：价格跌幅极浅 + 未持续走低 → 可能是瞬间波动
+    if not second_half_lower and price_change_ratio > -0.005:
+        return {
+            'confirmed': False,
+            'trigger_reason': '跌幅极浅且未持续走低，瞬间波动（不卖飞）',
+            'price_change_pct': round(price_change_ratio * 100, 2),
+            'vol_change_pct': round(vol_change_ratio * 100, 2),
+            'amount_change_pct': round(amount_change_ratio * 100, 2),
+            'price_stable': False,
+            'tail_reversal': False,
+        }
+
+    # ── 6. 综合研判 ──
+    # 三确认全部触发 + 无否决条件 → 确认真抛压
+    confirmed = price_drop and vol_surge and sell_order_grow
+
+    # 即使三确认不全，若两个强信号 + 未匹配卖单连续增加 → 也触发
+    strong_two = (
+            (price_drop and vol_surge and amount_continuous_up)
+            or (price_drop and sell_order_grow and vol_change_ratio > 0.1)
+    )
+    if not confirmed and strong_two:
+        confirmed = True
+
+    # ── 7. 信号原因拼接 ──
+    reasons = []
+    if price_drop:
+        reasons.append('价格下跌%.2f%%' % (price_change_ratio * 100))
+    if vol_surge:
+        reasons.append('成交量放大%.1f%%' % (vol_change_ratio * 100))
+    if sell_order_grow:
+        reasons.append('未匹配卖单增长%.1f%%' % (amount_change_ratio * 100))
+    if amount_continuous_up:
+        reasons.append('卖单连续堆积')
+
+    return {
+        'confirmed': confirmed,
+        'trigger_reason': '; '.join(reasons) if reasons else '无明确信号',
+        'price_change_pct': round(price_change_ratio * 100, 2),
+        'vol_change_pct': round(vol_change_ratio * 100, 2),
+        'amount_change_pct': round(amount_change_ratio * 100, 2),
+        'price_decline': second_half_lower,
+        'price_stable': False,
+        'tail_reversal': False,
+        'tail_rising_strength': tail_rising_strength,
+    }
 
 
-def _calculate_ema(prices, period):
-    """计算EMA"""
-    print("line:{} 计算EMA, 周期: {}".format(335, period))
+# ═══════════════════════════════════════════════════
+#  盘中风控  handle_data
+# ═══════════════════════════════════════════════════
 
-    if len(prices) < period:
-        return None
+def handle_data(context, data):
+    """
+    盘中风控逻辑：
 
-    multiplier = 2.0 / (period + 1)
-    ema = prices.iloc[0]
-
-    for i in range(1, len(prices)):
-        ema = prices.iloc[i] * multiplier + ema * (1 - multiplier)
-
-    return ema
-
-
-def _calculate_ema_from_list(values, period):
-    """从列表计算EMA"""
-    print("line:{} 从列表计算EMA, 周期: {}".format(347, period))
-
-    if len(values) < period:
-        return None
-
-    multiplier = 2.0 / (period + 1)
-    ema = values[0]
-
-    for i in range(1, len(values)):
-        ema = values[i] * multiplier + ema * (1 - multiplier)
-
-    return ema
-
-
-def _execute_sell(context, security, amount, reason):
-    """执行卖出操作"""
-    print("line:{} 执行卖出: {} 股数: {} 原因: {}".format(361, security, amount, reason))
-    log.info("line:{} 执行卖出: {} 股数: {} 原因: {}".format(362, security, amount, reason))
-
-    if amount <= 0:
-        log.warning("line:{} 卖出股数无效: {}".format(365, amount))
+    1. 若竞价逃顶未触发（held），盘中跌破成本价 5% 仍执行止损
+    2. 竞价已卖出则不再操作
+    """
+    if g.sell_triggered:
         return
 
     try:
-        order_id = 0
-        # order_id = order(security, -amount)
-        # if order_id:
-        #     log.info("line:{} 卖出成功: {} 订单ID: {}".format(370, security, order_id))
-        #
-        #     # 记录卖出历史
-        #     if security not in g.sell_history:
-        #         g.sell_history[security] = []
-        #
-        #     g.sell_history[security].append({
-        #         'amount': amount,
-        #         'reason': reason,
-        #         'timestamp': context.current_dt
-        #     })
-        # else:
-        #     log.error("line:{} 卖出失败: {}".format(377, security))
+        if g.stock not in context.portfolio.positions:
+            return
 
+        pos = context.portfolio.positions[g.stock]
+        total_hold = int(getattr(pos, 'amount', 0))
+        if total_hold <= 0:
+            return
 
-        log.info("line:{} 卖出成功: {}".format(370, security))
+        current_price = data[g.stock].close if g.stock in data else 0
+        avg_cost = float(getattr(pos, 'avg_cost', 0) or 0)
+        if current_price <= 0 or avg_cost <= 0:
+            return
+
+        loss_pct = (current_price - avg_cost) / avg_cost
+        if loss_pct < g.stop_loss_pct:
+            sell_qty = (total_hold // 100) * 100
+            if sell_qty >= 100:
+                if g.sim_mode:
+                    log.info(
+                        '【模拟·盘中止损】%s 浮亏 %.1f%%，拟清仓 %d 股（总持仓 %d）',
+                        g.stock, loss_pct * 100, sell_qty, total_hold,
+                                 )
+                else:
+                    # 实盘：需先确认 enable_amount ≥ sell_qty
+                    pos = get_position(g.stock)
+                    can_sell = 0
+                    try:
+                        can_sell = int(float(getattr(pos, 'enable_amount', 0)))
+                    except (TypeError, ValueError):
+                        can_sell = 0
+                    actual_sell = min(sell_qty, can_sell)
+                    if actual_sell >= 100:
+                        # oid = order(g.stock, -actual_sell)
+                        oid =1
+                        if oid:
+                            log.info(
+                                '【实盘·盘中止损】%s 浮亏 %.1f%%，卖出 %d 股',
+                                g.stock, loss_pct * 100, actual_sell,
+                                         )
+
     except Exception as e:
-        log.error("line:{} 执行卖出异常: {}".format(380, e))
-
-
-def before_trading_start(context, data):
-    """盘前处理"""
-    print("line:{} 盘前处理".format(385))
-    log.info("line:{} 盘前处理 - A股持仓卖出策略".format(386))
-
-
-def after_trading_end(context, data):
-    """盘后处理 - 记录当日买入"""
-    # 获取当日成交并记录买入
-    trades = get_trades()
-    for trade in trades:
-        if trade.business_direction == '买入':
-            security = trade.security
-            if security not in g.buy_history:
-                g.buy_history[security] = []
-            if context.current_date not in g.buy_history[security]:
-                g.buy_history[security].append(context.current_date)
-    
-    # 清理过期记录（保留最近N天）
-    trade_days = get_trade_days(context.current_date, g.buy_history_days)
-    valid_days = set(trade_days)
-    g.buy_history = {k: [d for d in v if d in valid_days] for k, v in g.buy_history.items()}
-    g.buy_history = {k: v for k, v in g.buy_history.items() if v}
-    
-    # 保存
-    with open(g.notebook_path + 'buy_history.pkl', 'wb') as f:
-        pickle.dump(g.buy_history, f, -1)
-    
-    log.info("买入记录已保存: {}".format(g.buy_history))
-    
-    total_value = context.portfolio.total_value
-    cash = context.portfolio.cash
-
-    log.info("line:{} 盘后总结 - 总资产: {:.2f}, 现金: {:.2f}".format(393, total_value, cash))
-
-    # 显示持仓情况
-    positions = context.portfolio.positions
-    if positions:
-        for security in positions:
-            if positions[security].amount > 0:
-                position = positions[security]
-                current_price = position.last_sale_price
-                entry_price = g.position_state.get(security, {}).get('entry_price', position.avg_cost)
-                pnl_ratio = (current_price - entry_price) / entry_price if entry_price > 0 else 0
-
-                log.info("line:{} 持仓 {}: {}股, 入场价: {:.2f}, 当前价: {:.2f}, 盈亏: {:.2%}".format(
-                    403, security, position.amount, entry_price, current_price, pnl_ratio))
-    else:
-        log.info("line:{} 当前无持仓".format(406))
+        log.error('[风控] handle_data 异常: %s', str(e))
