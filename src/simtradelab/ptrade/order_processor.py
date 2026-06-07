@@ -1,13 +1,26 @@
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2025 Kay
+#
+# This file is part of SimTradeLab, dual-licensed under AGPL-3.0 and a
+# commercial license. See LICENSE-COMMERCIAL.md or contact kayou@duck.com
+#
 """
 统一订单处理器
 
 整合订单创建、验证、执行的完整流程
 """
 
-from typing import Optional, Tuple
+
+from __future__ import annotations
+
+from typing import Optional
 import uuid
 import pandas as pd
+
+from .config_manager import config
+from .object import Order
+from simtradelab.i18n import t
 
 
 class OrderProcessor:
@@ -20,7 +33,7 @@ class OrderProcessor:
     4. 买卖执行
     """
 
-    def __init__(self, context, data_context, get_stock_date_index_func, log):
+    def __init__(self, context, data_context, get_stock_date_index_func, log, stats_collector=None):
         """初始化订单处理器
 
         Args:
@@ -28,11 +41,14 @@ class OrderProcessor:
             data_context: 数据上下文对象
             get_stock_date_index_func: 获取股票日期索引的函数
             log: 日志对象
+            stats_collector: 统计收集器（可选）
         """
         self.context = context
         self.data_context = data_context
         self.get_stock_date_index = get_stock_date_index_func
         self.log = log
+        self.stats_collector = stats_collector
+        self.lot_size = 100
 
     def get_execution_price(self, stock: str, limit_price: Optional[float] = None, is_buy: bool = True) -> Optional[float]:
         """获取交易执行价格（含滑点）
@@ -48,35 +64,54 @@ class OrderProcessor:
         if limit_price is not None:
             base_price = limit_price
         else:
-            if stock not in self.data_context.stock_data_dict:
+            # 根据frequency选择数据源
+            frequency = getattr(self.context, 'frequency', '1d')
+            if frequency == '1m' and self.data_context.stock_data_dict_1m is not None:
+                data_source = self.data_context.stock_data_dict_1m
+            else:
+                data_source = self.data_context.stock_data_dict
+
+            if stock not in data_source:
+                self.log.warning(t("order.price_no_data", stock=stock))
                 return None
 
-            stock_df = self.data_context.stock_data_dict[stock]
+            stock_df = data_source[stock]
             if not isinstance(stock_df, pd.DataFrame):
                 return None
 
             try:
-                date_dict, _ = self.get_stock_date_index(stock)
-                idx = date_dict.get(self.context.current_dt) or stock_df.index.get_loc(self.context.current_dt)
-                price = stock_df.iloc[idx]['close']
+                current_dt = self.context.current_dt
+                if frequency == '1m':
+                    # 分钟数据：用 DatetimeIndex.searchsorted 避免 datetime64[us] vs ns 精度不匹配
+                    idx = stock_df.index.searchsorted(current_dt, side='right') - 1
+                    if idx < 0:
+                        return None
+                else:
+                    # 日线数据：使用date_dict查找
+                    date_dict, _ = self.get_stock_date_index(stock)
+                    idx = date_dict.get(current_dt.value)
+                    if idx is None:
+                        idx = stock_df.index.get_loc(current_dt)
 
-                # 转换为标量值
-                if isinstance(price, pd.Series):
-                    price = price.item()
+                # 成交量检查：volume=0 表示停牌，Ptrade会拒绝订单
+                volume = stock_df['volume'].values[idx]
+                if volume == 0:
+                    self.log.warning(t("order.volume_zero", stock=stock))
+                    return None
 
+                price = stock_df['close'].values[idx]
                 base_price = float(price)
 
                 if pd.isna(base_price) or base_price <= 0:
+                    self.log.warning(t("order.price_abnormal", stock=stock, price=base_price))
                     return None
-            except:
+            except Exception as e:
+                self.log.warning(t("order.price_error", stock=stock, error=e))
                 return None
 
-        # 计算滑点
-        from .config_manager import config
-
         # 获取滑点配置
-        slippage = getattr(self.context, 'slippage', config.trading.slippage)
-        fixed_slippage = getattr(self.context, 'fixed_slippage', config.trading.fixed_slippage)
+        slippage = config.trading.slippage
+        fixed_slippage = config.trading.fixed_slippage
 
         # 计算滑点金额
         if slippage > 0:
@@ -99,26 +134,7 @@ class OrderProcessor:
 
         return final_price
 
-    def check_limit_status(self, stock: str, delta: int, limit_status: int) -> bool:
-        """检查涨跌停限制
-
-        Args:
-            stock: 股票代码
-            delta: 交易数量变化（正数买入，负数卖出）
-            limit_status: 涨跌停状态（1涨停，-1跌停，0正常）
-
-        Returns:
-            是否可交易
-        """
-        if delta > 0 and limit_status == 1:
-            self.log.warning("【订单失败】{} | 原因: 涨停买不进".format(stock))
-            return False
-        elif delta < 0 and limit_status == -1:
-            self.log.warning("【订单失败】{} | 原因: 跌停卖不出".format(stock))
-            return False
-        return True
-
-    def create_order(self, stock: str, amount: int, price: float) -> Tuple[str, object]:
+    def create_order(self, stock: str, amount: int, price: float) -> tuple[str, object]:
         """创建订单对象
 
         Args:
@@ -129,8 +145,6 @@ class OrderProcessor:
         Returns:
             (order_id, order对象)
         """
-        from simtradelab.ptrade.object import Order
-
         order_id = str(uuid.uuid4()).replace('-', '')
         order = Order(
             id=order_id,
@@ -152,28 +166,20 @@ class OrderProcessor:
         Returns:
             手续费总额
         """
-        from .config_manager import config
-
-        commission_ratio = getattr(self.context, 'commission_ratio', config.trading.commission_ratio)
-        min_commission = getattr(self.context, 'min_commission', config.trading.min_commission)
-
-        # 如果手续费率为0，则完全不收手续费
-        if commission_ratio == 0:
-            return 0
+        commission_ratio = config.trading.commission_ratio
+        min_commission = config.trading.min_commission
 
         value = amount * price
         # 佣金费
         broker_fee = max(value * commission_ratio, min_commission)
-        # 经手费率：万分之0.487
-        transfer_fee = value * 0.0000487
+        # 经手费
+        transfer_fee = value * config.trading.transfer_fee_rate
 
         commission = broker_fee + transfer_fee
 
         # 印花税(仅卖出时收取)
         if is_sell:
-            tax_rate = getattr(self.context, 'tax_rate', 0.001)
-            tax = value * tax_rate
-            commission += tax
+            commission += value * config.trading.stamp_tax_rate
 
         return commission
 
@@ -193,9 +199,11 @@ class OrderProcessor:
         total_cost = cost + commission
 
         if total_cost > self.context.portfolio._cash:
-            self.log.warning("【买入失败】{} | 原因: 现金不足 (需要{:.2f}, 可用{:.2f})".format(
-                stock, total_cost, self.context.portfolio._cash))
-            return False
+            daily_commission = getattr(self.context, '_daily_buy_commission', 0.0)
+            if cost > self.context.portfolio._cash + daily_commission:
+                self.log.warning(t("order.buy_no_cash", stock=stock, cost="{:.2f}".format(total_cost), cash="{:.2f}".format(self.context.portfolio._cash)))
+                return False
+            # 手续费导致的微负：Ptrade允许（当日已付手续费不计入后续订单可用现金）
 
         self.context.portfolio._cash -= total_cost
 
@@ -203,9 +211,19 @@ class OrderProcessor:
         if not hasattr(self.context, 'total_commission'):
             self.context.total_commission = 0
         self.context.total_commission += commission
+        self.context._daily_buy_commission = getattr(self.context, '_daily_buy_commission', 0.0) + commission
 
-        # 建仓/加仓（含批次追踪）
-        self.context.portfolio.add_position(stock, amount, price, self.context.current_dt)
+        # 建仓/加仓（含批次追踪），cost_basis含佣金（与Ptrade一致）
+        cost_basis = total_cost / amount
+        self.context.portfolio.add_position(stock, amount, cost_basis, self.context.current_dt)
+
+        # 累计当日买入金额（gross，不含手续费）
+        self.context._daily_buy_total += amount * price
+
+        if self.stats_collector:
+            self.stats_collector.collect_trade(
+                self.context.current_dt, stock, "buy", amount, price, amount * price, commission
+            )
 
         return True
 
@@ -221,14 +239,27 @@ class OrderProcessor:
             是否成功
         """
         if stock not in self.context.portfolio.positions:
-            self.log.warning("【卖出失败】{} | 原因: 无持仓".format(stock))
+            self.log.warning(t("order.sell_no_position", stock=stock))
             return False
 
         position = self.context.portfolio.positions[stock]
 
+        # T+1限制：只能卖出 enable_amount（前日持仓）
+        if self.context.t_plus_1:
+            if position.enable_amount <= 0:
+                self.log.warning(t("order.sell_t1_limit", stock=stock))
+                return False
+
+            if amount > position.enable_amount:
+                # 截断到可卖数量（整手）
+                available = (position.enable_amount // self.lot_size) * self.lot_size
+                if available <= 0:
+                    available = position.enable_amount  # 零股全出
+                self.log.info(t("order.t1_truncate", stock=stock, amount=amount, available=available))
+                amount = available
+
         if position.amount < amount:
-            self.log.warning("【卖出失败】{} | 原因: 持仓不足 (持有{}, 尝试卖出{})".format(
-                stock, position.amount, amount))
+            self.log.warning(t("order.sell_insufficient", stock=stock, held=position.amount, amount=amount))
             return False
 
         # 计算手续费
@@ -246,31 +277,39 @@ class OrderProcessor:
             self.context.total_commission = 0
         self.context.total_commission += commission
 
-        # 更新价格
-        position.last_sale_price = price
-        if position.amount > 0:
-            position.market_value = position.amount * price
+        # 更新价格（仅当position仍存在时）
+        if stock in self.context.portfolio.positions:
+            position = self.context.portfolio.positions[stock]
+            position.last_sale_price = price
+            if position.amount > 0:
+                position.market_value = position.amount * price
 
         # 入账
         self.context.portfolio._cash += net_revenue
 
+        # 累计当日卖出金额（gross，不含手续费）
+        self.context._daily_sell_total += amount * price
+
+        if self.stats_collector:
+            self.stats_collector.collect_trade(
+                self.context.current_dt, stock, "sell", amount, price, amount * price, commission
+            )
+
         # 日志
         if tax_adjustment > 0:
-            self.log.info("📊分红税 | {} | 补税{:.2f}元".format(stock, tax_adjustment))
+            self.log.info(t("order.dividend_tax_pay", stock=stock, amount="{:.2f}".format(tax_adjustment)))
         elif tax_adjustment < 0:
-            self.log.info("📊分红税 | {} | 退税{:.2f}元".format(stock, -tax_adjustment))
+            self.log.info(t("order.dividend_tax_refund", stock=stock, amount="{:.2f}".format(-tax_adjustment)))
 
         return True
 
-    def process_order(self, stock: str, target_amount: int, limit_price: Optional[float] = None,
-                     limit_status: int = 0) -> bool:
+    def process_order(self, stock: str, target_amount: int, limit_price: Optional[float] = None) -> bool:
         """处理订单的完整流程
 
         Args:
             stock: 股票代码
             target_amount: 目标数量
             limit_price: 限价
-            limit_status: 涨跌停状态
 
         Returns:
             是否成功
@@ -278,7 +317,7 @@ class OrderProcessor:
         # 1. 获取执行价格
         price = self.get_execution_price(stock, limit_price)
         if price is None:
-            self.log.warning("【订单失败】{} | 原因: 无法获取价格".format(stock))
+            self.log.warning(t("order.no_price", stock=stock))
             return False
 
         # 2. 计算交易数量
@@ -291,11 +330,7 @@ class OrderProcessor:
         if delta == 0:
             return True  # 无需交易
 
-        # 3. 检查涨跌停
-        if not self.check_limit_status(stock, delta, limit_status):
-            return False
-
-        # 4. 执行交易
+        # 3. 执行交易
         if delta > 0:
             return self.execute_buy(stock, delta, price)
         else:

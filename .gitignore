@@ -64,16 +64,16 @@ reports/
 # Logs
 *.log
 logs/
+backtest*.json
 
 *.png
 !docs/sponsor/*.png
-*.log
-web/uploads/
-cache/
-.roo/
-.augment/
+*.gz
 CLAUDE.md
 GEMINI.md
 .pre-commit-config.yaml
-data/*.h5
-data/.keys_cache
+strategies/*
+data*/
+.claude
+*.ipynb
+.codex

@@ -1,18 +1,87 @@
-# This workflow will upload SimTradeLab to PyPI when a release is created
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python#publishing-to-package-registries
-
-name: Publish SimTradeLab Package
+name: Auto Release
 
 on:
-  release:
-    types: [published]
-  # 可选：允许手动触发
+  push:
+    branches: [main]
+    paths:
+      - 'pyproject.toml'
   workflow_dispatch:
 
-jobs:
-  release-build:
-    runs-on: ubuntu-latest
+permissions:
+  contents: write
+  id-token: write
 
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      new_release: ${{ steps.check.outputs.new_release }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if tag exists
+        id: check
+        run: |
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "new_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "new_release=true" >> $GITHUB_OUTPUT
+          fi
+
+  create-tag:
+    needs: check-version
+    if: needs.check-version.outputs.new_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ needs.check-version.outputs.tag }}" -m "Release ${{ needs.check-version.outputs.tag }}"
+          git push origin "${{ needs.check-version.outputs.tag }}"
+
+  create-release:
+    needs: [check-version, create-tag]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          # 提取 CHANGELOG.md 中对应版本的内容
+          NOTES=$(awk "/^## \[$VERSION\]/{found=1; next} /^---$/{if(found) exit} /^## \[/{if(found) exit} found{print}" CHANGELOG.md)
+          # 写入文件避免转义问题
+          echo "$NOTES" > /tmp/release_notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check-version.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --title "SimTradeLab $TAG" \
+            --notes-file /tmp/release_notes.md
+
+  build:
+    needs: [check-version, create-tag]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -25,47 +94,9 @@ jobs:
         uses: snok/install-poetry@v1
         with:
           version: latest
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libhdf5-dev
-
-          # 从源码编译安装ta-lib
-          wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
-          tar -xzf ta-lib-0.4.0-src.tar.gz
-          cd ta-lib/
-          ./configure --prefix=/usr
-          make
-          sudo make install
-          cd ..
-          rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
-
-      - name: Load cached venv
-        id: cached-poetry-dependencies
-        uses: actions/cache@v4
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
-
-      - name: Install dependencies
-        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-        run: poetry install --no-interaction --no-root
-
-      - name: Install project
-        run: poetry install --no-interaction
 
       - name: Build release distributions
-        run: |
-          poetry build
-
-      - name: Check build artifacts
-        run: |
-          ls -la dist/
-          echo "Built packages:"
-          find dist/ -name "*.whl" -o -name "*.tar.gz"
+        run: poetry build
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4
@@ -73,14 +104,13 @@ jobs:
           name: release-dists
           path: dist/
 
-  pypi-publish:
+  publish:
+    needs: [check-version, build]
     runs-on: ubuntu-latest
-    needs: release-build
     environment: pypi
     permissions:
       id-token: write
       contents: read
-
     steps:
       - name: Retrieve release distributions
         uses: actions/download-artifact@v4
@@ -88,93 +118,32 @@ jobs:
           name: release-dists
           path: dist/
 
-      - name: Publish release distributions to PyPI
+      - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
-  post-publish:
+  verify:
+    needs: [check-version, publish]
     runs-on: ubuntu-latest
-    needs:
-      - pypi-publish
-    if: github.event_name == 'release'
-    permissions:
-      contents: write 
-
     steps:
-      - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Verify PyPI publication
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
         run: |
-          # 等待PyPI索引更新
-          sleep 30
-
-          # 获取不带v前缀的版本号
-          VERSION=${{ github.event.release.tag_name }}
-          VERSION=${VERSION#v}
-
-          # 尝试安装刚发布的包
-          pip install simtradelab==$VERSION
-
-          # 验证安装
-          python -c 'import simtradelab; from simtradelab.backtest.runner import BacktestRunner; print("✅ SimTradeLab " + simtradelab.__version__ + " installed successfully")'
-
-      - name: Install script dependencies
-        run: |
-          pip install gitpython
-
-      - name: Generate Release Notes
-        id: release_notes
-        run: |
-          # 生成Release Notes
-          python scripts/generate_release_notes.py ${{ github.event.release.tag_name }} --output release_notes.md
-
-          # 读取生成的内容并设置为输出
-          echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
-          cat release_notes.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Update Release with Generated Notes
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const releaseNotes = fs.readFileSync('release_notes.md', 'utf8');
-
-            // 更新Release的描述
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: context.payload.release.id,
-              body: releaseNotes
-            });
-
-      - name: Create success comment
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const tagName = '${{ github.event.release.tag_name }}';
-            const version = tagName.replace(/^v/, '');
-            
-            github.rest.issues.createComment({
-              issue_number: context.payload.release.id,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `🎉 SimTradeLab ${tagName} has been successfully published to PyPI!
-
-              📦 **Installation:**
-              \`\`\`bash
-              pip install simtradelab==${version}
-              \`\`\`
-
-              🔗 **PyPI Link:** https://pypi.org/project/simtradelab/${version}/
-
-              ✅ **Verification:** Package installation verified successfully.
-
-              📋 **Release Notes:** Automatically generated and updated in the release description.`
-            })
+          python -m pip install --upgrade pip
+          for i in 1 2 3 4 5 6; do
+            if pip install "simtradelab==$VERSION"; then
+              break
+            fi
+            if [ "$i" -eq 6 ]; then
+              echo "Failed to install simtradelab==$VERSION from PyPI after retries."
+              exit 1
+            fi
+            echo "Package not available yet on PyPI, retrying in 30s..."
+            sleep 30
+          done
+          python -c "import simtradelab; print('SimTradeLab ' + simtradelab.__version__ + ' installed successfully')"

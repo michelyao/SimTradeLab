@@ -1,15 +1,54 @@
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2025 Kay
+#
+# This file is part of SimTradeLab, dual-licensed under AGPL-3.0 and a
+# commercial license. See LICENSE-COMMERCIAL.md or contact kayou@duck.com
+#
 """
 PTrade 策略执行框架
 
 提供完整的策略执行环境，整合生命周期控制、API验证和Context管理
 """
 
+
+from __future__ import annotations
+
+import builtins
 import logging
 import traceback
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Optional
 
 from .context import Context
+from simtradelab.i18n import t
+
+# 策略代码禁止导入的模块（与Ptrade平台一致）
+_current_backtest_date: str | None = None
+
+_BLOCKED_MODULES = frozenset({
+    'os', 'sys', 'io', 'subprocess', 'shutil', 'socket', 'http', 'urllib',
+    'ctypes', 'signal', 'importlib', 'runpy', 'code', 'codeop',
+})
+
+_REAL_IMPORT = builtins.__import__
+
+
+def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+    top = name.split('.')[0]
+    if top in _BLOCKED_MODULES:
+        raise ImportError(f"Module '{name}' is not allowed in strategy code")
+    return _REAL_IMPORT(name, globals, locals, fromlist, level)
+
+
+def _build_safe_builtins() -> dict:
+    """构建受限 builtins，移除 exec/eval/compile/breakpoint"""
+    unsafe = {'exec', 'eval', 'compile', 'breakpoint'}
+    safe = {k: v for k, v in builtins.__dict__.items() if k not in unsafe}
+    safe['__import__'] = _safe_import
+    return safe
+
+
+_SAFE_BUILTINS = _build_safe_builtins()
 
 
 class StrategyExecutionError(Exception):
@@ -32,25 +71,26 @@ class StrategyExecutionEngine:
         context: Context,
         api: Any,
         stats_collector: Any,
-        g: Any,
         log: logging.Logger,
+        frequency: str = '1d',
+        cancel_event=None,
     ):
-        """
-        初始化策略执行引擎
+        """初始化策略执行引擎
 
         Args:
             context: PTrade Context对象
             api: PtradeAPI对象
             stats_collector: 统计收集器
-            g: Global对象
             log: 日志对象
+            frequency: 回测频率 '1d'日线 '1m'分钟线
         """
         # 核心组件（外部注入）
         self.context = context
         self.api = api
         self.stats_collector = stats_collector
-        self.g = g
         self.log = log
+        self.frequency = frequency
+        self._cancel_event = cancel_event
 
         # 获取生命周期控制器
         if self.context._lifecycle_controller is None:
@@ -58,7 +98,7 @@ class StrategyExecutionEngine:
         self.lifecycle_controller = self.context._lifecycle_controller
 
         # 策略相关
-        self._strategy_functions: Dict[str, Callable[..., Any]] = {}
+        self._strategy_functions: dict[str, Callable[..., Any]] = {}
         self._strategy_name: Optional[str] = None
         self._is_running = False
     # ==========================================
@@ -77,9 +117,10 @@ class StrategyExecutionEngine:
 
         # 构建命名空间
         strategy_namespace = {
+            '__builtins__': _SAFE_BUILTINS,
             '__name__': '__main__',
             '__file__': strategy_path,
-            'g': self.g,
+            'g': self.context.g,
             'log': self.log,
             'context': self.context,
         }
@@ -121,45 +162,38 @@ class StrategyExecutionEngine:
     def register_initialize(self, func: Callable[[Context], None]) -> None:
         """注册initialize函数"""
         self._strategy_functions["initialize"] = func
-        self.context.register_initialize(func)
 
     def register_handle_data(self, func: Callable[[Context, Any], None]) -> None:
         """注册handle_data函数"""
         self._strategy_functions["handle_data"] = func
-        self.context.register_handle_data(func)
 
     def register_before_trading_start(
         self, func: Callable[[Context, Any], None]
     ) -> None:
         """注册before_trading_start函数"""
         self._strategy_functions["before_trading_start"] = func
-        self.context.register_before_trading_start(func)
 
     def register_after_trading_end(
         self, func: Callable[[Context, Any], None]
     ) -> None:
         """注册after_trading_end函数"""
         self._strategy_functions["after_trading_end"] = func
-        self.context.register_after_trading_end(func)
 
     def register_tick_data(self, func: Callable[[Context, Any], None]) -> None:
         """注册tick_data函数"""
         self._strategy_functions["tick_data"] = func
-        self.context.register_tick_data(func)
 
     def register_on_order_response(
         self, func: Callable[[Context, Any], None]
     ) -> None:
         """注册on_order_response函数"""
         self._strategy_functions["on_order_response"] = func
-        self.context.register_on_order_response(func)
 
     def register_on_trade_response(
         self, func: Callable[[Context, Any], None]
     ) -> None:
         """注册on_trade_response函数"""
         self._strategy_functions["on_trade_response"] = func
-        self.context.register_on_trade_response(func)
 
     # ==========================================
     # PTrade API 代理接口
@@ -195,21 +229,24 @@ class StrategyExecutionEngine:
         self._is_running = True
 
         try:
-            self.log.info(f"Starting strategy execution: {self._strategy_name}")
+            self.log.info(t("engine.start", strategy=self._strategy_name))
 
             # 1. 执行初始化
             self._execute_initialize()
 
-            # 2. 执行每日循环
-            success = self._run_daily_loop(date_range)
+            # 2. 根据frequency选择循环模式
+            if self.frequency == '1m':
+                success = self._run_minute_loop(date_range)
+            else:
+                success = self._run_daily_loop(date_range)
 
             if success:
-                self.log.info("Strategy execution completed successfully")
+                self.log.info(t("engine.completed"))
 
             return success
 
         except Exception as e:
-            self.log.error(f"Strategy execution failed: {e}")
+            self.log.error(t("engine.failed", error=e))
             traceback.print_exc()
             return False
 
@@ -218,8 +255,12 @@ class StrategyExecutionEngine:
 
     def _execute_initialize(self) -> None:
         """执行初始化阶段"""
-        self.log.info("Executing initialize phase")
-        self.context.execute_initialize()
+        from simtradelab.ptrade.lifecycle_controller import LifecyclePhase
+
+        self.log.info(t("engine.initialize"))
+        self.lifecycle_controller.set_phase(LifecyclePhase.INITIALIZE)
+        self._strategy_functions["initialize"](self.context)
+        self.context.initialized = True
 
     def _run_daily_loop(self, date_range) -> bool:
         """执行每日回测循环
@@ -234,12 +275,19 @@ class StrategyExecutionEngine:
         from simtradelab.ptrade.object import Data
         from simtradelab.ptrade.cache_manager import cache_manager
 
-        for current_date in date_range:
+        # 跨日追踪：上一交易日收盘后的组合市值（用于计算真实日盈亏）
+        prev_day_end_value = None
+
+        total_days = len(date_range)
+        for i, current_date in enumerate(date_range):
+            if self._cancel_event and self._cancel_event.is_set():
+                self.log.info(t("engine.cancelled"))
+                return False
             # 更新日期上下文
             self.context.current_dt = current_date
             self.context.blotter.current_dt = current_date
-
-            # 使用API获取真正的前一交易日（而非简单减1天）
+            global _current_backtest_date
+            _current_backtest_date = str(current_date.date())
             prev_trade_day = self.api.get_trading_day(-1)
             if prev_trade_day:
                 self.context.previous_date = prev_trade_day
@@ -250,12 +298,15 @@ class StrategyExecutionEngine:
             # 清理全局缓存
             cache_manager.clear_daily_cache(current_date)
 
-            # 记录交易前状态
-            prev_portfolio_value = self.context.portfolio.portfolio_value
-            prev_cash = self.context.portfolio._cash
-
             # 收集交易前统计
             self.stats_collector.collect_pre_trading(self.context, current_date)
+
+            # T+1日切：前日持仓全部可卖（在除权事件前重置，送股后由除权处理自行更新）
+            for position in self.context.portfolio.positions.values():
+                position.enable_amount = position.amount
+
+            # 处理除权除息事件（在策略执行前）
+            self._process_dividend_events(current_date)
 
             # 构造data对象
             data = Data(current_date, self.context.portfolio._bt_ctx)
@@ -264,17 +315,190 @@ class StrategyExecutionEngine:
             if not self._execute_lifecycle(data):
                 return False
 
-            # 处理分红事件（在生命周期执行完、订单成交后）
-            self._process_dividend_events(current_date)
+            # 执行 run_daily 注册的任务（日频固定在15:00执行）
+            self._execute_daily_tasks()
 
-            # 收集交易金额
-            current_cash = self.context.portfolio._cash
-            self.stats_collector.collect_trading_amounts(prev_cash, current_cash)
+            # 收集交易金额（从OrderProcessor累计的gross金额）
+            self.stats_collector.collect_trading_amounts(self.context)
 
-            # 收集交易后统计
-            self.stats_collector.collect_post_trading(self.context, prev_portfolio_value)
+            # 收集交易后统计（用上一交易日收盘后的组合市值计算真实日盈亏）
+            current_end_value = self.context.portfolio.portfolio_value
+            if prev_day_end_value is None:
+                prev_day_end_value = self.context.portfolio.starting_cash
+            self.stats_collector.collect_post_trading(self.context, prev_day_end_value)
+            prev_day_end_value = current_end_value
+            # 按百分比节流：每增加 1% 才发一次，最后一天必发
+            pct = (i + 1) * 100 // total_days
+            if pct > i * 100 // total_days or i + 1 == total_days:
+                print("__PROGRESS__:{}/{}".format(i + 1, total_days))
 
         return True
+
+    def _run_minute_loop(self, date_range) -> bool:
+        """执行分钟级回测循环
+
+        Args:
+            date_range: 交易日序列
+
+        Returns:
+            是否成功完成所有交易日
+        """
+        import pandas as pd
+        from datetime import timedelta
+        from simtradelab.ptrade.object import Data
+        from simtradelab.ptrade.cache_manager import cache_manager
+        from simtradelab.ptrade.lifecycle_controller import LifecyclePhase
+
+        # 跨日追踪：上一交易日收盘后的组合市值
+        prev_day_end_value = None
+
+        total_days = len(date_range)
+        for i, current_date in enumerate(date_range):
+            if self._cancel_event and self._cancel_event.is_set():
+                self.log.info(t("engine.cancelled"))
+                return False
+            # 确保是 pd.Timestamp（防止 datetime.date 无法 replace 时间分量）
+            current_date = pd.Timestamp(current_date)
+
+            # 更新日期上下文（设为开盘时间）
+            self.context.current_dt = current_date
+            self.context.blotter.current_dt = current_date
+            global _current_backtest_date
+            _current_backtest_date = str(current_date.date())
+
+            # 使用API获取真正的前一交易日
+            prev_trade_day = self.api.get_trading_day(-1)
+            if prev_trade_day:
+                self.context.previous_date = prev_trade_day
+            else:
+                self.context.previous_date = (current_date - timedelta(days=1)).date()
+
+            # 清理全局缓存
+            cache_manager.clear_daily_cache(current_date)
+
+            # 收集交易前统计
+            self.stats_collector.collect_pre_trading(self.context, current_date)
+
+            # T+1日切：前日持仓全部可卖
+            for position in self.context.portfolio.positions.values():
+                position.enable_amount = position.amount
+
+            # 处理除权除息事件（在策略执行前）
+            self._process_dividend_events(current_date)
+
+            # 构造data对象
+            data = Data(current_date, self.context.portfolio._bt_ctx)
+
+            # 1. before_trading_start（每日一次，开盘前）
+            if not self._safe_call('before_trading_start', LifecyclePhase.BEFORE_TRADING_START, data):
+                return False
+
+            # 2. handle_data + run_daily任务（分钟级调用）
+            minute_bars = self._get_minute_bars(current_date)
+            daily_task_times = self._get_daily_task_time_set()
+            for minute_dt in minute_bars:
+                self.context.current_dt = minute_dt
+                _current_backtest_date = minute_dt.strftime('%Y-%m-%d %H:%M')
+                data = Data(minute_dt, self.context.portfolio._bt_ctx)
+                if not self._safe_call('handle_data', LifecyclePhase.HANDLE_DATA, data):
+                    return False
+                # 触发订单/成交回调（实盘模拟）
+                self._fire_callbacks()
+                # 在匹配的分钟bar执行run_daily任务
+                hhmm = f'{minute_dt.hour:02d}:{minute_dt.minute:02d}'
+                if hhmm in daily_task_times:
+                    self._execute_daily_tasks_for_time(hhmm)
+
+            # 3. after_trading_end（每日一次，收盘后）
+            self.context.current_dt = current_date.replace(hour=15, minute=0, second=0)
+            data = Data(self.context.current_dt, self.context.portfolio._bt_ctx)
+            self._safe_call('after_trading_end', LifecyclePhase.AFTER_TRADING_END, data, allow_fail=True)
+
+            # 收集交易金额（从OrderProcessor累计的gross金额）
+            self.stats_collector.collect_trading_amounts(self.context)
+
+            # 收集交易后统计
+            current_end_value = self.context.portfolio.portfolio_value
+            if prev_day_end_value is None:
+                prev_day_end_value = self.context.portfolio.starting_cash
+            self.stats_collector.collect_post_trading(self.context, prev_day_end_value)
+            prev_day_end_value = current_end_value
+            pct = (i + 1) * 100 // total_days
+            if pct > i * 100 // total_days or i + 1 == total_days:
+                print("__PROGRESS__:{}/{}".format(i + 1, total_days))
+
+        return True
+
+    # 预生成分钟时间偏移模板（类级别，只算一次）
+    _MINUTE_OFFSETS = None
+
+    @classmethod
+    def _get_minute_offsets(cls):
+        """生成分钟时间偏移模板（惰性初始化，仅一次）"""
+        if cls._MINUTE_OFFSETS is None:
+            from datetime import timedelta
+            # A股交易时间: 9:30-11:30 (121分钟), 13:00-15:00 (121分钟)
+            morning = [timedelta(hours=9, minutes=30) + timedelta(minutes=i) for i in range(121)]
+            afternoon = [timedelta(hours=13) + timedelta(minutes=i) for i in range(121)]
+            cls._MINUTE_OFFSETS = morning + afternoon
+        return cls._MINUTE_OFFSETS
+
+    def _get_minute_bars(self, trade_date):
+        """生成交易日分钟时间序列
+
+        Args:
+            trade_date: 交易日
+
+        Returns:
+            分钟时间戳列表
+        """
+        base = trade_date.normalize()
+        return [base + offset for offset in self._get_minute_offsets()]
+
+    def _fire_callbacks(self) -> None:
+        """触发 on_order_response / on_trade_response 回调（实盘模拟）"""
+        from simtradelab.ptrade.lifecycle_controller import LifecyclePhase
+
+        order_callbacks = self.api.flush_order_callbacks()
+        if order_callbacks and 'on_order_response' in self._strategy_functions:
+            self.lifecycle_controller.set_phase(LifecyclePhase.ON_ORDER_RESPONSE)
+            try:
+                self._strategy_functions['on_order_response'](self.context, order_callbacks)
+            except Exception as e:
+                self.log.error(t("engine.func_failed", func='on_order_response', error=e))
+                traceback.print_exc()
+
+        trade_callbacks = self.api.flush_trade_callbacks()
+        if trade_callbacks and 'on_trade_response' in self._strategy_functions:
+            self.lifecycle_controller.set_phase(LifecyclePhase.ON_TRADE_RESPONSE)
+            try:
+                self._strategy_functions['on_trade_response'](self.context, trade_callbacks)
+            except Exception as e:
+                self.log.error(t("engine.func_failed", func='on_trade_response', error=e))
+                traceback.print_exc()
+
+    def _execute_daily_tasks(self) -> None:
+        """执行所有 run_daily 注册的任务（日频模式：忽略time参数，全部执行）"""
+        for func, _ in self.api._daily_tasks:
+            try:
+                func(self.context)
+            except Exception as e:
+                self.log.error(t("engine.daily_task_failed", error=e))
+                self.log.error(traceback.format_exc())
+
+    def _get_daily_task_time_set(self) -> set[str]:
+        """获取所有 run_daily 注册的时间集合（分钟模式用）"""
+        return {time_str for _, time_str in self.api._daily_tasks}
+
+    def _execute_daily_tasks_for_time(self, hhmm: str) -> None:
+        """执行指定时间的 run_daily 任务（分钟模式）"""
+        for func, time_str in self.api._daily_tasks:
+            if time_str == hhmm:
+                try:
+                    func(self.context)
+                except Exception as e:
+                    self.log.error(t("engine.daily_task_time_failed", time=hhmm, error=e))
+                    self.log.error(traceback.format_exc())
 
     def _execute_lifecycle(self, data) -> bool:
         """执行策略生命周期方法
@@ -294,6 +518,9 @@ class StrategyExecutionEngine:
         # handle_data
         if not self._safe_call('handle_data', LifecyclePhase.HANDLE_DATA, data):
             return False
+
+        # 触发订单/成交回调（实盘模拟）
+        self._fire_callbacks()
 
         # after_trading_end（允许失败）
         self._safe_call('after_trading_end', LifecyclePhase.AFTER_TRADING_END, data, allow_fail=True)
@@ -322,7 +549,7 @@ class StrategyExecutionEngine:
         try:
             self.lifecycle_controller.set_phase(phase)
         except Exception as e:
-            self.log.error(f"设置生命周期阶段 {phase} 失败: {e}")
+            self.log.error(t("engine.phase_failed", phase=phase, error=e))
             return False
 
         # 如果函数不存在，阶段已设置，直接返回成功
@@ -333,31 +560,49 @@ class StrategyExecutionEngine:
         try:
             self._strategy_functions[func_name](self.context, data)
             return True
+        except ValueError as e:
+            self.log.error(t("engine.func_failed", func=func_name, error=e))
+            return allow_fail
         except Exception as e:
-            self.log.error(f"{func_name}执行失败: {e}")
+            self.log.error(t("engine.func_failed", func=func_name, error=e))
             traceback.print_exc()
             return allow_fail
 
     def _process_dividend_events(self, current_date):
-        """处理分红事件
+        """处理除权除息事件
 
         Args:
             current_date: 当前交易日
 
-        分红处理逻辑：
-        1. 分红到账时全额到账（不扣税）
-        2. 记录每批次的分红金额
-        3. 卖出时根据持股时间（FIFO）计算并扣除分红税
+        处理逻辑：
+        1. 送股/配股: 调整持仓数量
+        2. 现金分红: 到账（预扣税20%）
         """
         try:
             date_str = current_date.strftime('%Y%m%d')
 
-            # 遍历所有持仓股票
             for stock_code, position in self.context.portfolio.positions.items():
                 if position.amount <= 0:
                     continue
 
-                # 从缓存中查找分红
+                # 分红和送股都基于登记日（前一天）的持股数
+                original_amount = position.amount
+
+                # 检查除权事件（送股/配股）
+                exrights_df = self.api.data_context.exrights_dict.get(stock_code)
+                if exrights_df is not None and not exrights_df.empty:
+                    date_int = int(date_str)
+                    if date_int in exrights_df.index:
+                        event = exrights_df.loc[date_int]
+                        allotted = float(event.get('allotted_ps', 0) or 0)
+                        if allotted > 0:
+                            new_amount = int(original_amount * (1 + allotted))
+                            position.amount = new_amount
+                            position.enable_amount = new_amount
+                            position.cost_basis /= (1 + allotted)
+                            self.context.portfolio._invalidate_cache()
+
+                # 现金分红（按登记日股数计算）
                 if stock_code not in self.api.data_context.dividend_cache:
                     continue
 
@@ -365,33 +610,18 @@ class StrategyExecutionEngine:
                 if date_str not in stock_dividends:
                     continue
 
-                # 获取税前分红金额（每股）
                 dividend_per_share_before_tax = stock_dividends[date_str]
-
-                # 预扣税率20%（保守估计）
                 pre_tax_rate = 0.20
                 dividend_per_share_after_tax = dividend_per_share_before_tax * (1 - pre_tax_rate)
-                total_dividend_after_tax = dividend_per_share_after_tax * position.amount
+                total_dividend_after_tax = dividend_per_share_after_tax * original_amount
 
                 if total_dividend_after_tax > 0:
-                    # 税后金额到账
-                    old_cash = self.context.portfolio._cash
                     self.context.portfolio._cash += total_dividend_after_tax
                     self.context.portfolio._invalidate_cache()
-
-                    # 记录分红到批次（用于卖出时税务调整）
                     self.context.portfolio.add_dividend(stock_code, dividend_per_share_before_tax)
 
-                    self.log.info(
-                        f"💰分红 | {stock_code} | {position.amount}股 | "
-                        f"税前{dividend_per_share_before_tax:.4f}元/股 | 预扣税率{pre_tax_rate:.0%} | "
-                        f"到账{total_dividend_after_tax:.2f}元 | "
-                        f"现金: {old_cash:.2f} → {self.context.portfolio._cash:.2f}"
-                    )
-
         except Exception as e:
-            self.log.warning(f"分红处理失败: {e}")
-            import traceback
+            self.log.warning(t("engine.dividend_failed", error=e))
             traceback.print_exc()
 
     # ==========================================
@@ -400,7 +630,7 @@ class StrategyExecutionEngine:
 
     def reset_strategy(self) -> None:
         """重置策略状态"""
-        self.log.info("Resetting strategy state")
+        self.log.info(t("engine.resetting"))
 
         self._strategy_functions.clear()
         self._strategy_name = None

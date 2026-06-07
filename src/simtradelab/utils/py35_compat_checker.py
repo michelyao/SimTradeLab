@@ -1,4 +1,10 @@
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2025 Kay
+#
+# This file is part of SimTradeLab, dual-licensed under AGPL-3.0 and a
+# commercial license. See LICENSE-COMMERCIAL.md or contact kayou@duck.com
+#
 """
 Python 3.5兼容性检查工具
 
@@ -6,9 +12,11 @@ Python 3.5兼容性检查工具
 支持自动修复f-string等兼容性问题
 """
 
+
+from __future__ import annotations
+
 import ast
 import re
-from typing import List, Tuple
 
 
 class Python35CompatChecker:
@@ -62,7 +70,7 @@ class Python35CompatChecker:
         except Exception as e:
             self.errors.append("解析失败: {}".format(str(e)))
 
-    def check(self) -> Tuple[bool, List[str]]:
+    def check(self) -> tuple[bool, list[str]]:
         """执行兼容性检查
 
         Returns:
@@ -184,7 +192,7 @@ class Python35CompatChecker:
                     )
 
 
-def check_python35_compatibility(code: str) -> Tuple[bool, List[str]]:
+def check_python35_compatibility(code: str) -> tuple[bool, list[str]]:
     """检查代码是否兼容Python 3.5
 
     Args:
@@ -197,7 +205,7 @@ def check_python35_compatibility(code: str) -> Tuple[bool, List[str]]:
     return checker.check()
 
 
-def check_file_python35_compatibility(filepath: str) -> Tuple[bool, List[str]]:
+def check_file_python35_compatibility(filepath: str) -> tuple[bool, list[str]]:
     """检查文件是否兼容Python 3.5
 
     Args:
@@ -219,7 +227,7 @@ def check_file_python35_compatibility(filepath: str) -> Tuple[bool, List[str]]:
     return check_python35_compatibility(code)
 
 
-def check_and_fix_file(filepath: str, auto_fix: bool = True) -> Tuple[bool, List[str], str]:
+def check_and_fix_file(filepath: str, auto_fix: bool = True) -> tuple[bool, list[str], str]:
     """检查并自动修复文件的Python 3.5兼容性问题
 
     Args:

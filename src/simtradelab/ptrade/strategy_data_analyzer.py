@@ -1,13 +1,23 @@
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2025 Kay
+#
+# This file is part of SimTradeLab, dual-licensed under AGPL-3.0 and a
+# commercial license. See LICENSE-COMMERCIAL.md or contact kayou@duck.com
+#
 """
 策略数据依赖分析器
 
 通过静态分析策略代码,识别数据API调用,判断需要加载哪些数据
 """
 
+
+from __future__ import annotations
+
 import ast
-from typing import Set
 from pydantic import BaseModel, Field
+
+from simtradelab.i18n import t
 
 
 class DataDependencies(BaseModel):
@@ -17,7 +27,7 @@ class DataDependencies(BaseModel):
     needs_fundamentals: bool = False
     needs_exrights: bool = False
 
-    fundamental_tables: Set[str] = Field(default_factory=set)
+    fundamental_tables: set[str] = Field(default_factory=set)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -27,8 +37,8 @@ class StrategyDataAnalyzer(ast.NodeVisitor):
 
     def __init__(self):
         self.dependencies = DataDependencies()
-        self.api_calls: Set[str] = set()
-        self.fundamental_tables: Set[str] = set()
+        self.api_calls: set[str] = set()
+        self.fundamental_tables: set[str] = set()
 
     def visit_Call(self, node):
         """访问函数调用节点"""
@@ -41,10 +51,17 @@ class StrategyDataAnalyzer(ast.NodeVisitor):
         if func_name:
             self.api_calls.add(func_name)
 
-            # 特殊处理get_fundamentals,提取表名参数
-            if func_name == 'get_fundamentals' and len(node.args) >= 2:
-                table_arg = node.args[1]
-                if isinstance(table_arg, ast.Constant) and isinstance(table_arg.value, str):
+            # 特殊处理get_fundamentals,提取表名参数（位置参数 + 关键字参数）
+            if func_name == 'get_fundamentals':
+                table_arg = None
+                if len(node.args) >= 2:
+                    table_arg = node.args[1]
+                else:
+                    for kw in node.keywords:
+                        if kw.arg == 'table' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                            table_arg = kw.value
+                            break
+                if table_arg is not None and isinstance(table_arg, ast.Constant) and isinstance(table_arg.value, str):
                     self.fundamental_tables.add(table_arg.value)
 
         self.generic_visit(node)
@@ -97,7 +114,7 @@ def analyze_strategy_data_requirements(strategy_path: str) -> DataDependencies:
 
     except Exception as e:
         # 分析失败时返回全量依赖
-        print("策略分析失败: {}, 加载全部数据".format(e))
+        print(t("deps.failed", error=e))
         return DataDependencies(
             needs_price_data=True,
             needs_valuation=True,
@@ -110,16 +127,16 @@ def print_dependencies(deps: DataDependencies):
     """打印数据依赖摘要"""
     items = []
     if deps.needs_price_data:
-        items.append("价格")
+        items.append(t("deps.price"))
     if deps.needs_valuation:
-        items.append("估值")
+        items.append(t("deps.valuation"))
     if deps.needs_fundamentals:
-        tables = ','.join(deps.fundamental_tables) if deps.fundamental_tables else '全部'
-        items.append("财务({})".format(tables))
+        tables = ','.join(deps.fundamental_tables) if deps.fundamental_tables else 'ALL'
+        items.append(t("deps.fundamentals", tables=tables))
     if deps.needs_exrights:
-        items.append("除权")
+        items.append(t("deps.exrights"))
 
     if items:
-        print("策略数据依赖: {}".format(' | '.join(items)))
+        print(t("deps.result", items=' | '.join(items)))
     else:
-        print("策略数据依赖: 无")
+        print(t("deps.none"))

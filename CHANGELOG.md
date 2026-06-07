@@ -1,9 +1,756 @@
-# 更新日志
+# Changelog
 
-本项目的所有重要变更都将记录在此文件中。
+All notable changes to this project will be documented in this file.
 
-格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
-项目遵循 [语义化版本](https://semver.org/spec/v2.0.0.html) 规范。
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [2.12.3] - 2026-06-06
+
+### Fixed
+
+- **PTrade market-data compatibility** — `get_history` and `get_price` DataFrame returns now preserve legacy PTrade-style integer positional access for column Series, avoiding pandas `FutureWarning`/`KeyError` when strategies use examples like `series[-1]`.
+- **history cache shape isolation** — `get_history` now distinguishes single-stock string requests from one-element list requests in its cache key, preventing call-order-dependent return shapes.
+- **daily date-index resolution** — prebuilt and lazy daily date indexes now use the same int64 nanosecond contract. Datetime indexes stored at non-nanosecond resolution, including pandas 3 `datetime64[us]`, no longer miss exact dates and fall back to the wrong trading day.
+- **valuation date lookup** — `get_fundamentals(table="valuation")` normalizes datetime-index lookups to nanoseconds before searching, keeping realtime market-cap calculations on the requested trading day.
+
+### Tests
+
+- Added contract tests for lazy vs prebuilt daily date indexes, PTrade market-data return shapes, legacy positional Series access, fundamentals/valuation date behavior, and pandas 3 non-nanosecond datetime indexes.
+
+## [2.12.2] - 2026-05-27
+
+### Fixed
+
+- **Cross-frequency data fallback** — `get_history` and `get_price` no longer return empty results when querying minute/period data during daily backtests. Previously, with `current_dt` at midnight (00:00:00), `searchsorted` returned -1 for minute data starting at 09:31, causing stocks to be silently skipped. Now falls back to 15:00 market close on the same day to locate the latest available bar.
+
+## [2.12.1] - 2026-05-23
+
+### Fixed
+
+- **get_fundamentals keyword arg** — `strategy_data_analyzer` now detects `table='valuation'` as a keyword argument, not just positional. Previously keyword-passed table names were silently ignored, causing valuation data not to load and `get_fundamentals` to return empty results.
+
+## [2.12.0] - 2026-05-21
+
+### Changed
+
+- **Remove sandbox config** — `sandbox` field removed from `BacktestConfig`; safe builtins always enforced
+- **Broker-gated py35 check** — Python 3.5 compat check scoped to `guosheng`/`dongguan`; `auto` and `shanxi` skip f-string validation
+- **shanxi multi-stock format** — `get_history` returns `MultiIndex(field, code)` with datetime index for `shanxi` profile
+
+## [2.11.0] - 2026-05-19
+
+### ✨ Added
+
+- **api coverage** — Add 40+ PTrade-compatible API stubs with clear `NotImplementedError` messages, covering:
+  - trading: `order_market`, `ipo_stocks_order`, `after_trading_order`, `after_trading_cancel_order`, `order_tick`, `cancel_order_ex`, `get_all_orders`, `get_ipo_stocks`, `get_deliver`, `get_fundjour`, `get_trade_name`
+  - margin: `margincash_open/close/direct_refund`, `marginsec_open/close/direct_refund`, `get_margincash_stocks`, `get_marginsec_stocks`, `get_margin_contract/contractreal`, `get_assure_security_list`, `get_margincash_open_amount` etc.
+  - ETF: `get_etf_info`, `get_etf_stock_info`, `get_etf_stock_list`, `etf_basket_order`, `etf_purchase_redemption`, `get_etf_list`
+  - options: `open_prepared`, `close_prepared`, `option_exercise`, `option_covered_lock/unlock`, `get_covered_lock_amount`, `get_covered_unlock_amount`
+  - convertible bonds: `get_cb_info`, `get_cb_list`, `debt_to_stock_order`
+  - market data: `get_individual_entrust`, `get_tick_direction`, `get_sort_msg`, `get_gear_price`, `get_snapshot`
+  - notifications: `send_email`, `send_qywx`, `permission_test`
+- **get_fundamentals** — Significantly enhanced: fields now optional (auto-selects all table fields), expanded field lists per table (20+ fields for valuation), table aliases (`balance_statement`, `income_statement`, `cashflow_statement`, `eps`), auto-fill `secu_code`/`secu_abbr`/`trading_day`/`end_date`, better date resolution for financial reports
+
+### 🔧 Changed
+
+- **return type alignment** — Multiple API return types adjusted to match PTrade platform behavior:
+  - `get_trade_days` / `get_all_trades_days` return `np.ndarray` with list-like truthiness
+  - `get_trading_day` / `get_trading_day_by_date` return `datetime.date` instead of `str`
+  - `get_order` returns `list[Order]` (single-element or empty) instead of `Order | None`
+  - `get_trades` returns `dict[str, list[list]]` grouped by order id instead of raw order list
+  - `get_stock_name` returns `dict[str, str | None] | None` (never bare string)
+  - `get_stock_status` returns `dict[str, bool | None] | None`
+  - `get_position` always returns `Position` (never `None`), empty position when not held
+  - `cancel_order` returns `None` (not `bool`)
+  - `get_stock_blocks` returns `None` when no data (not `{}`)
+- **parameter alignment** — Multiple API signatures adjusted:
+  - `set_parameters`: removed `params` dict, only accepts `**kwargs`
+  - `get_user_name`: removed `login_account` parameter
+  - `get_stock_info`: default fields changed to `["stock_name"]`
+  - `set_slippage` default: `0.0` → `0.001`; `set_fixed_slippage` default: `0.001` → `0.0`
+  - `set_position`: uses `sid` key (was `security`), adds `enable_amount` support
+  - `convert_position_from_csv`: returns `sid`-keyed format
+  - `get_individual_transaction/transcation`: removed `is_dict` parameter
+  - `run_interval`: removed `interval_timer_ranges` parameter
+  - `buy_open/sell_open/sell_close/buy_close`: renamed `security` to `contract`, removed `close_today` kwargs
+  - Kwarg alias map direction reversed and expanded for better broker compatibility
+- **order processing** — Removed internal `check_limit_status` from `OrderProcessor`, limit check now handled externally
+- **get_fundamentals** — `fields` moved from required to optional parameter, `get_market_list` updated exchange list, `get_security_type` uses actual stock name lookup
+- **broker compatibility** — `check_limit` returns `{}` for guosheng; `get_trading_day` uses next-trading-day lookup for guosheng day=0
+
+### 🗑️ Removed
+
+- `check_limit_status` method from `OrderProcessor` (limit_status parameter removed from `process_order`)
+- `_submit_derivative_order` convenience method
+- `_get_price_and_check_limit` → renamed to `_get_execution_price` (no longer checks limit)
+
+### 🌍 i18n
+
+- New strings: `api.local_backtest_api_unsupported`, `api.gf_invalid_table`, `api.gf_fields_omitted_requires_named_date`
+
+### 📦 Upgrade
+
+```bash
+pip install --upgrade simtradelab==2.11.0
+```
+
+---
+
+## [2.10.3] - 2026-05-09
+
+### 🐛 Fixed
+
+- **daily index resolution** — Add `_resolve_daily_index` fallback logic for day-level queries from minute timestamps (`exact -> normalize -> previous trading day`) to avoid lookup failures in `get_price`, `history`, and limit-status related flows.
+- **data query robustness** — When day index cannot be resolved for a symbol, skip gracefully instead of raising index/location errors in multi-symbol queries.
+
+### 🔧 Changed
+
+- **api typing** — Standardize multiple optional API parameters from `x: T = None` to `x: T | None = None` across PTrade-compatible interfaces for clearer signatures and static analysis friendliness.
+- **repo hygiene** — Ignore local Codex workspace metadata via `.codex` in `.gitignore`.
+
+### ✅ Tests
+
+- **broker profile compatibility** — Extend broker-compat test coverage for the updated daily index resolution behavior.
+
+### 📦 Upgrade
+
+```bash
+pip install --upgrade simtradelab==2.10.3
+```
+
+---
+
+## [2.10.2] - 2026-04-14
+
+### ✨ Added
+
+- **broker compatibility** — Add `broker_profile` support (`auto/guosheng/dongguan/shanxi`) in backtest config and runtime context for broker-specific API behavior.
+- **api coverage** — Add/complete multiple PTrade-compatible APIs and aliases, including:
+  - `get_trading_day_by_date`, `get_trend_data`, `get_reits_list`
+  - `get_frequency`, `get_business_type`, `get_current_kline_count`, `filter_stock_by_status`
+  - broker naming aliases: `get_margin_asset` / `get_margin_assert`, `get_individual_transcation` / `get_individual_transaction`
+- **snapshot guard** — Add broker API baseline snapshots and signature compatibility guard scripts.
+- **tests** — Add comprehensive unit test suite for API compatibility, lifecycle, order processor, object model, cache, and broker profile behavior.
+
+### 🔧 Changed
+
+- **market data API** — Refactor `get_price` / `get_history` with normalized frequency handling:
+  - support minute aggregations (`5m/15m/30m/60m/120m`)
+  - support period aggregations (`1w/mo/1q/1y`)
+  - add minute-gap fill behavior for `fill='pre'`
+  - align default history fields to include `price`
+- **release tooling** — Move release utilities from `scripts/` to `script/` and align release docs with the current CI auto-release workflow.
+- **docs** — Update PTrade API references, backtest support matrix, and broker compatibility docs.
+
+### 🐛 Fixed
+
+- **api contracts** — Fix multiple broker compatibility edge cases in API signatures/parameters and optional alias kwargs.
+- **order/position semantics** — Adjust T+1-related position and limit-check behavior to match expected test contracts.
+- **release guard path** — Fix API signature guard to read source from `src/simtradelab/ptrade/api.py`.
+
+### 📦 Upgrade
+
+```bash
+pip install --upgrade simtradelab==2.10.2
+```
+
+---
+
+## [2.10.1] - 2026-03-26
+
+### 🐛 Fixed
+
+- **api** — `get_index_stocks` now converts PTrade code format (`.XSHG`/`.XSHE`/`.XBHS`) to data format (`.SS`/`.SZ`) automatically
+- **api** — `get_index_stocks` raises `ValueError` with clear i18n message when index data is missing, instead of silently returning `[]`
+- **api** — `set_benchmark` supports PTrade code format (e.g. `000300.XSHG` → `000300.SS`)
+- **api** — `get_fundamentals` returns `DataFrame(columns=fields)` instead of empty `DataFrame()` when no data matches, preventing `KeyError` on `sort_values`
+
+### 🔧 Changed
+
+- **project** — Add ruff formatter/linter config (`pyproject.toml`) for code style consistency with SimTradeAPI
+
+### 📦 Upgrade
+
+```bash
+pip install --upgrade simtradelab==2.10.1
+```
+
+---
+
+## [2.10.0] - 2026-03-23
+
+### ✨ Added
+
+- **backtest** — Multi-entry file support: `BacktestConfig.strategy_file` defaults to `backtest.py`, can be set to `live.py` for live-simulation mode
+- **backtest** — `_file_prefix` property for log/chart filenames that adapt to the entry file (e.g. `live_*.json`)
+- **ptrade** — `on_order_response` / `on_trade_response` callback simulation for live-mode strategies
+
+### 📦 Upgrade
+
+```bash
+pip install --upgrade simtradelab==2.10.0
+```
+
+---
+
+## [2.9.0] - 2026-03-20
+
+### ✨ Added
+
+- **i18n** — Auto-detect log language: CN market defaults to Chinese, others follow system locale; explicit `locale` param overrides
+- **docs** — German README (`README.de.md`)
+- **docs** — All `BacktestConfig` parameters documented in README examples with comments
+
+### 🐛 Fixed
+
+- **api** — `get_history` multi-stock: left-pad newly-listed stocks with NaN to align to trading calendar (PTrade convention)
+
+### 📦 Upgrade
+
+```bash
+pip install --upgrade simtradelab==2.9.0
+```
+
+---
+
+## [2.8.1] - 2026-03-18
+
+### 🐛 Fixed
+
+- **i18n** — Fix `Path(__file__)` resolution failure after PyInstaller packaging, use `sys._MEIPASS` for compatibility
+- **adj_cache** — Fix adjustment factor cache files written to `data/` root instead of market subdirectory (`data/cn/`, `data/us/`)
+
+### 📦 Upgrade
+
+```bash
+pip install --upgrade simtradelab==2.8.1
+```
+
+---
+
+## [2.8.0] - 2026-03-15
+
+### ✨ Added
+
+- **Multi-market support** — New `market` config (`CN`/`US`); `MarketProfile` auto-adapts trading rules (T+1, price limits, lot size, commissions, default benchmark)
+- **i18n** — Backtest output in zh/en/de via `locale` config
+- **Trade log** — `StatsCollector` + `PtradeAPI` integration, records every trade
+- **Optimization mode** — `optimization_mode` skips strategy validation/data analysis/logging; shares date-index cache across trials
+
+### 🔧 Improved
+
+- **Optimizer refactor** — `optimizer_framework.py` slimmed by ~400 lines
+- **Log format** — Backtest date prefix in log lines
+- **Benchmark default** — `benchmark_code` defaults to empty string, auto-selects market default
+- **Data loading** — `storage.py` ensures date columns are datetime, compatible with string/int parquet formats
+
+### 📦 Upgrade
+
+```bash
+pip install --upgrade simtradelab==2.8.0
+```
+
+---
+
+## [2.7.0] - 2026-03-10
+
+### ✨ 新增功能
+
+- **T+0 交易模式** — 新增 `t_plus_1=False` 配置项，支持 ETF 和美股等 T+0 品种回测
+
+### 🐛 修复
+
+- **数据加载类型兼容** — `load_stock` 加载 parquet 时确保 date 列转换为 DatetimeIndex，修复部分数据源下日期比较报错
+- **首日盈亏计算** — 首日 `prev_day_end_value` 改用 `starting_cash`，日盈亏图表不再将首日盈亏固定为 0
+- **多笔买入手续费** — 同一 handle_data 内连续买入时，已付手续费不再误扣后续订单的可用现金
+- **分钟线日期追踪** — 分钟级回测循环内正确更新 `_current_backtest_date`
+
+### 📦 升级指南
+
+```bash
+pip install --upgrade simtradelab==2.7.0
+```
+
+---
+
+## [2.6.1] - 2026-03-04
+
+### ✨ 新增功能
+
+- **T+1 交易限制** — 分钟线（`frequency='1m'`）模式下正确模拟 A 股 T+1 规则：当日买入的股票不可当日卖出，日切时重置可卖数量
+
+### 🔧 改进
+
+- **优化器日志** — 使用无锁日志输出机制，提升多进程优化性能
+
+### 🐛 修复
+
+- **分钟数据加载索引** — `load_stock_1m` 现在同时支持 `datetime` 和 `date` 列名作为时间索引
+
+### 📦 升级指南
+
+```bash
+pip install --upgrade simtradelab==2.6.1
+```
+
+---
+
+## [2.6.0] - 2026-02-27
+
+### ✨ 新增功能
+
+- **索提诺比率（Sortino）** — 回测报告新增 `sortino_ratio`，仅用负收益下行标准差衡量风险，比夏普比率更准确反映策略的下行风险控制能力
+- **卡玛比率（Calmar）** — 回测报告新增 `calmar_ratio`（年化收益 / 最大回撤绝对值），衡量单位回撤换取的年化收益
+- **CSV 导出** — `BacktestConfig` 新增 `enable_export: bool`，设为 `True` 后回测结束自动输出两个文件到 `strategies/{name}/stats/`：
+  - `daily_stats_{start}_{end}.csv` — 每日组合价值、盈亏、买卖金额、持仓市值
+  - `positions_history_{start}_{end}.csv` — 每日持仓快照（代码、名称、数量、市值、成本）
+  - 编码 `utf-8-sig`，Excel 直接打开无乱码
+- **批量回测** — 新增 `BatchBacktestRunner` + `BatchConfig`，对同一策略跑多个日期区间，数据只加载一次；`summary()` 打印各区间核心指标对比表
+
+### 🗑️ 移除
+
+- 移除 server, uvicorn 等不必要的依赖，让 SimTradeLab 回归纯回测引擎定位
+
+### 📦 升级指南
+
+```bash
+pip install --upgrade simtradelab==2.6.0
+```
+
+---
+
+## [2.5.0] - 2026-02-26
+
+### ✨ 新增功能
+
+- **FastAPI Server** - 新增可选依赖
+
+### 🔧 改进
+
+- **CLI 精简** — 移除冗余的 `command` 子命令参数，直接 `simtradelab [options]` 启动
+
+### 🗑️ 移除
+
+- **jupyter / baostock** — 从开发依赖移除，不再支持 Notebook 交互模式
+- **research 模块** — 移除 `simtradelab.research`（Jupyter 专用 API 封装）
+- **cli/data_tools.py** — 移除孤立的数据解包工具（无入口、无 server 端点）
+- **enable_charts 请求字段** — Server 不生成图表，图表由 UI 侧用 series 数据渲染
+- **chart_png_path 结果字段** — 对应移除，结果仅返回 metrics + series
+
+### 📦 升级指南
+
+```bash
+pip install --upgrade simtradelab==2.5.0
+
+# 启动 API server
+pip install simtradelab[server]==2.5.0
+simtradelab --port 8000
+```
+
+**兼容性：** ✅ 回测 API 无 breaking change。
+
+---
+
+## [2.4.2] - 2026-02-23
+
+### 🐛 Bug 修复
+
+- **pyarrow 依赖缺失** - 补入 `pyarrow>=10.0.0` 为必须依赖，修复 `pip install simtradelab` 后 Parquet 读写报 `ImportError` 的问题
+
+### 📦 升级指南
+
+```bash
+pip install --upgrade simtradelab==2.4.2
+```
+
+**兼容性：** ✅ API 接口无 breaking change。
+
+---
+
+## [2.4.1] - 2026-02-23
+
+### 🐛 Bug 修复
+
+- **Windows 相对路径修复** - `DataServer` 的 `data_path` 参数现使用 `Path.resolve()` 转换为绝对路径，修复 Windows 下相对路径失效问题
+- **Windows 路径自动发现** - `get_project_root()` 新增检查 `cwd.parent`，支持从子目录（如 `notebooks/`）运行时自动发现上级的 `data/` 和 `strategies/` 目录
+- **路径常量懒加载** - `paths.py` 模块级常量改用 `__getattr__` 延迟计算，避免 import 时 CWD 错误导致路径固化；`Config.data_path` 属性每次动态调用 `get_project_root()`，不再缓存旧路径
+
+### 📦 升级指南
+
+```bash
+pip install --upgrade simtradelab==2.4.1
+```
+
+**兼容性：** ✅ API 接口无 breaking change。
+
+---
+
+## [2.4.0] - 2026-02-21
+
+### ✨ 新增功能
+
+- **整手约束** - 买卖数量自动对齐至手数：A股100股，科创板200股最小申报量；调整后数量为0时自动拒单，与 PTrade 行为对齐
+- **涨跌停检查** - 买入时检测涨停，卖出时检测跌停，命中则拒单
+- **停牌检测** - volume=0 时视为停牌，拒绝所有买卖订单
+
+### 🐛 Bug 修复
+
+- **前复权公式修正** - 统一使用 `adj_a * price + adj_b` 公式（原 `(price - adj_b) / adj_a` 为错误公式），消除除法精度损失
+- **舍入精度修正** - `_round2` 新增 TypeA（float64 低于真实 .XX5 时向上取整）和 Anti-TypeA（float64 高于 .XX5 一个 ULP、偶数第二位时向下取整）边界处理，精确匹配 PTrade 行为
+- **资金不足前置检查** - 调整买入数量前先验证剩余资金，避免无效下单循环
+
+### 🔧 改进
+
+- **图表工具模块** - 提取 `utils/plot.py`，统一处理图表水印和保存，简化 `backtest/stats.py`
+- **文档更新** - 补全 Parquet 存储相关文档，移除 HDF5 系统依赖说明，性能基准从 20-30x 更新为 100-160x
+
+### 📦 升级指南
+
+从 v2.3.0 升级：
+
+```bash
+pip install --upgrade simtradelab==2.4.0
+```
+
+**⚠️ 行为变更（可能影响回测结果）：**
+- 整手约束现已生效：买入数量将自动向下取整（A股至100股，科创板至200股），与 PTrade 一致
+- 前复权价格计算公式修正，复权价格数值会有细微差异
+
+**兼容性：** ✅ API 接口无 breaking change。
+
+---
+
+## [2.3.0] - 2026-02-12
+
+### ✨ 新增功能
+
+- **沙箱模式** - 新增 `BacktestConfig(sandbox=True/False)` 配置。`sandbox=True`（默认）限制策略代码的 `import`（禁止 os/sys/io/subprocess 等）和 `builtins`（禁止 exec/eval/compile），与 PTrade 平台行为一致；`sandbox=False` 解除所有限制，适合本地开发调试
+- **run_daily 实际执行** - `run_daily()` 不再是空操作，日频模式在每日收盘前执行，分钟模式在注册时间对应的分钟 bar 执行
+
+### 🐛 Bug 修复
+
+- **日期类型验证修正** - `BacktestConfig` 的 `start_date`/`end_date` 验证器简化为 `pd.Timestamp(v)`，不再限制只接受 `str` 和 `pd.Timestamp`，修复传入 `datetime.date` 等类型时的报错
+- **估值数据查询日期修正** - `get_fundamentals` 对 valuation 表改用 `side='right'` 查找，返回查询日当天数据而非前一交易日
+- **order_target_value 生命周期校验** - 补加 `@validate_lifecycle` 装饰器（此前缺失）
+- **佣金零费率路径修正** - 移除 `calculate_commission` 中 `commission_ratio == 0` 的提前返回，统一走标准计算流程（确保 min_commission 仍生效）
+
+### 🔧 改进
+
+- **统计收集器重构** - `StatsCollector` 的内部存储从 `dict[str, list]` 重构为 `BacktestStats` 数据类，属性访问替代字典键查找
+- **生命周期装饰器零开销优化** - `validate_lifecycle` 对全阶段 API（get_history/get_price 等）直接返回原函数，无任何包装开销；受限 API 仅做 `frozenset` 成员检查，移除 `RLock`、`Pydantic` 验证对象
+- **日期索引 int64 化** - `get_stock_date_index` 用 `int64` 纳秒戳作为 dict key 和 numpy 数组做二分查找，避免 `pd.Timestamp` 构造开销
+- **LRU 缓存替代手动淘汰** - `stock_status_cache`、`fundamentals_cache` 改用 `cachetools.LRUCache`，移除手动 `.clear()` 逻辑
+- **前复权精度修正** - 新增 `_round2()` 函数，使用 Python `round()` 语义替代 `np.round()`，修正银行家舍入导致的与 PTrade 精度不一致
+- **复权计算简化** - 移除从原始除权事件手动计算的 fallback 路径，统一使用平台预计算因子，代码量减少 ~60 行
+- **交易 API 去重** - 提取 `_get_price_and_check_limit`、`_adjust_buy_amount`、`_submit_order` 三个内部方法，`order`/`order_target`/`order_value` 共用，消除大量重复代码
+- **生命周期控制器精简** - 移除 `APICallRecord`、`LifecycleValidationResult`、调用历史记录、全局控制器等未使用功能，代码从 ~350 行缩减至 ~50 行
+- **图表渲染优化** - 每日盈亏和交易金额改用 `fill_between` 替代 `bar`（无需 bar_width 参数）；`tight_layout()` 替代 `bbox_inches='tight'` 避免双重渲染
+- **分钟 bar 生成优化** - 使用类级别预计算的时间偏移模板，避免每日重复调用 `pd.date_range`
+- **Portfolio 收盘价日缓存** - 同一交易日内多次计算 `portfolio_value` 时复用收盘价查找结果
+- **get_price/get_history 空结果日志** - 返回空时输出 warning 级别日志，便于排查数据问题
+- **ta-lib 改为可选依赖** - `pip install simtradelab` 不再强制安装 ta-lib；需要技术指标时使用 `pip install simtradelab[indicators]`
+- **清理死代码** - 移除 `importlib_metadata` fallback、`API_MODE_RESTRICTIONS`、`ptrade/__init__.py` 中未使用的导出等
+- **Python 3.13 支持** - classifiers 新增 Python 3.13
+
+### 🏗️ 基础设施
+
+- **CI 工作流** - 添加同步 dev 分支的 GitHub Actions 工作流配置
+
+### 📦 升级指南
+
+从 v2.2.1 升级：
+
+```bash
+pip install --upgrade simtradelab==2.3.0
+```
+
+**兼容性：** ✅ 向后兼容，无 breaking change。
+
+---
+
+## [2.2.1] - 2026-02-09
+
+### 🐛 Bug 修复
+
+- **买入成本含佣金** - `cost_basis` 现在包含佣金，与 PTrade 实际行为对齐
+- **除权事件处理修复** - 使用 `date` 列匹配替代索引查找，除权时同步调整 `cost_basis`
+- **空数据快速报错** - `StockData` 数据为空时抛出明确 `ValueError`
+- **日期类型修正** - 回测循环中确保 `current_date` 为 `pd.Timestamp`，避免 `datetime.date` 无法 `replace` 时间分量
+
+### 🔧 改进
+
+- **路径处理重构** - 使用 `Path` 对象替代字符串拼接，跨平台兼容
+- **项目根目录查找优化** - 新增 CWD 优先检测，支持 `manifest.json` 判定
+- **图表 x 轴自适应** - 根据回测时长自动选择年/季/月刻度间隔
+- **控制台编码修正** - 使用 `reconfigure` 确保 UTF-8 编码和实时输出
+
+### 📦 升级指南
+
+从 v2.2.0 升级：
+
+```bash
+pip install --upgrade simtradelab==2.2.1
+```
+
+**兼容性：** ✅ 向后兼容，无 breaking change。
+
+---
+
+## [2.2.0] - 2026-02-07
+
+### ✨ 新增功能
+
+- **分钟线回测** - 支持 `frequency='1m'` 分钟级回测，需配合 `data/stocks_1m/` 分钟数据
+- **API 增强** - 增强股票筛选和策略参数配置能力
+- **Ptrade API 类型声明脚本** - `scripts/setup_typeshed.sh`，让 Pylance 识别策略中的 Ptrade API 全局函数
+
+### 🔧 改进
+
+- **回测图表中文化** - 图表标签从英文改为中文（策略净值、每日盈亏、买卖金额、持仓市值）
+- **图表柱宽自适应** - 根据回测周期自动调整柱状图宽度
+- **统计数据收集优化** - 改进 StatsCollector 数据采集流程
+- **复权计算向量化** - `_apply_adj_factors` 替代逐行计算，提升性能
+- **类型注解现代化** - 全面使用 `list[str]`、`dict[str, Any]`、`X | None` 等现代语法
+- **发布工作流精简** - 移除冗余步骤，简化 CI 配置
+
+### 📦 升级指南
+
+从 v2.1.0 升级：
+
+```bash
+pip install --upgrade simtradelab==2.2.0
+```
+
+**兼容性：** ✅ 向后兼容，无 breaking change。分钟回测为新增功能，需额外准备分钟数据。
+
+---
+
+## [2.1.0] - 2026-01-30
+
+### 🔧 改进
+
+- **持仓更新逻辑优化** - 优化持仓更新和卖出验证流程
+- **API 异常处理** - 优化异常处理和复权计算性能
+- **订单字段规范化** - 订单处理中统一使用 `symbol` 替换 `stock` 字段
+
+### ⚠️ 破坏性变更
+
+- **数据保存格式变更** - 从 HDF5（.h5）改为 Parquet 格式，旧缓存需重建
+
+---
+
+## [2.0.0] - 2026-01-08
+
+### ⚠️ 重大变更（Breaking Changes）
+
+本版本包含重大变更，升级前请仔细阅读。
+
+#### 📄 许可证变更
+
+**从 MIT 更改为 AGPL-3.0 + 商业双许可模式**
+
+- **开源使用**：AGPL-3.0 许可证
+  - ✅ 免费用于开源项目
+  - ✅ 个人学习和研究
+  - ⚠️ 网络使用需开源（AGPL要求）
+
+- **商业使用**：需购买商业许可
+  - 用于商业/闭源产品
+  - 作为内部工具但不希望开源代码
+  - 需要技术支持和定制开发
+  - 📧 联系: kayou@duck.com
+
+**影响范围**：
+- 现有开源项目：✅ 可继续使用（符合AGPL要求）
+- 商业闭源项目：⚠️ 需购买商业许可或迁移到v1.x
+- 个人学习研究：✅ 无影响
+
+详见：[LICENSE](LICENSE) 和 [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md)
+
+#### 🔧 API Breaking Changes
+
+**4个交易/查询API参数重命名（与PTrade官方规范对齐）**
+
+| API | 旧参数名 | 新参数名 | 影响 |
+|-----|---------|---------|------|
+| `order_target` | `stock` | `security` | ⚠️ 关键字参数调用会报错 |
+| `order_value` | `stock` | `security` | ⚠️ 关键字参数调用会报错 |
+| `order_target_value` | `stock` | `security` | ⚠️ 关键字参数调用会报错 |
+| `get_fundamentals` | `stocks` | `security` | ⚠️ 关键字参数调用会报错 |
+
+**迁移示例：**
+
+```python
+# ❌ v1.x 写法（关键字参数）
+order_target(stock='600519.SS', amount=1000)
+order_value(stock='600519.SS', value=10000)
+get_fundamentals(stocks=['600519.SS'], ...)
+
+# ✅ v2.0 写法（推荐）
+order_target(security='600519.SS', amount=1000)
+order_value(security='600519.SS', value=10000)
+get_fundamentals(security=['600519.SS'], ...)
+
+# ✅ 位置参数不受影响（无需修改）
+order_target('600519.SS', 1000)
+order_value('600519.SS', 10000)
+```
+
+**兼容性说明：**
+- ✅ 使用位置参数的代码：无需修改
+- ⚠️ 使用关键字参数的代码：必须修改参数名
+- ✅ `get_fundamentals` 现在支持单个股票和股票列表
+
+**自动检测工具：**
+```bash
+# 扫描策略代码中使用旧参数名的位置
+grep -n "stock=" strategies/*/backtest.py
+grep -n "stocks=" strategies/*/backtest.py
+```
+
+### ✨ 新增功能
+
+#### 📚 文档重构
+
+**README 精简优化**
+- 从 911 行压缩到 340 行（压缩 62.7%）
+- 移除冗余的技术细节和重复内容
+- 保留核心使用指南和快速开始流程
+- 许可证说明提前到更显眼位置
+
+**新增独立文档**
+- `docs/INSTALLATION.md` - 详细安装指南
+  - 多平台系统依赖安装（macOS/Linux/Windows）
+  - 源码安装和PyPI安装方式
+  - 工作目录配置和数据准备
+  - 常见问题排查（Q&A 6条）
+
+- `docs/ARCHITECTURE.md` - 架构设计文档
+  - 核心模块职责说明
+  - 性能优化详解（数据常驻、多级缓存、向量化计算）
+  - 策略执行引擎设计
+  - 生命周期管理机制
+  - 持仓管理与分红税算法
+
+- `docs/TOOLS.md` - 工具脚本说明
+  - 参数优化框架（Optuna集成）
+  - 性能监控工具（@timer装饰器）
+  - 策略代码静态分析
+  - Python 3.5兼容性检查
+
+- `docs/IDE_SETUP.md` - IDE配置指南
+  - VS Code 和 PyCharm 配置
+  - 类型提示和代码片段
+  - 开发环境优化
+
+#### 📝 源码文件头
+
+**统一的 SPDX 许可标识**
+
+所有30个Python源文件添加标准化文件头：
+```python
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2025 Kay
+#
+# This file is part of SimTradeLab, dual-licensed under AGPL-3.0 and a
+# commercial license. See LICENSE-COMMERCIAL.md or contact kayou@duck.com
+```
+
+**影响文件：**
+- `src/simtradelab/` 下所有 `.py` 文件（30个）
+- 提升法律合规性和机器可读性
+- 符合 SPDX 规范 2.3
+
+### 🔧 改进
+
+#### 🎯 API 设计优化
+
+**统一参数命名**
+- 交易API统一使用 `security` 参数（与PTrade官方一致）
+- `get_fundamentals` 支持 `str | list[str]` 类型（更灵活）
+
+#### 📖 贡献者协议
+
+**完善 CLA 条款**
+- 明确贡献者版权归属
+- 说明开源许可和商业许可权利
+- 提供清晰的贡献指南
+
+详见：`docs/CONTRIBUTING.md`
+
+### 📦 升级指南
+
+#### 从 v1.x 升级到 v2.0.0
+
+**重要提示：** 仔细评估许可证变更对您的项目的影响
+
+```bash
+# 1. 备份现有策略
+cp -r strategies strategies_backup
+
+# 2. 升级到新版本
+pip install --upgrade simtradelab==2.0.0
+
+# 3. 检查策略代码中的关键字参数
+grep -rn "stock=" strategies/
+grep -rn "stocks=" strategies/
+
+# 4. 修改代码（如果使用了关键字参数）
+# 将 stock= 改为 security=
+# 将 stocks= 改为 security=
+
+# 5. 运行回测验证
+poetry run python -m simtradelab.backtest.run_backtest
+```
+
+#### 许可证选择决策树
+
+```
+是否用于网络服务（SaaS/Web应用）？
+├─ 是 → 是否愿意开源所有代码？
+│  ├─ 是 → ✅ 使用 AGPL-3.0（免费）
+│  └─ 否 → ⚠️ 需购买商业许可
+└─ 否 → 是否用于商业产品？
+   ├─ 是 → 是否愿意开源产品代码？
+   │  ├─ 是 → ✅ 使用 AGPL-3.0（免费）
+   │  └─ 否 → ⚠️ 需购买商业许可
+   └─ 否 → ✅ 使用 AGPL-3.0（个人学习/开源项目免费）
+```
+
+#### 版本选择建议
+
+| 使用场景 | 推荐版本 | 许可证 |
+|---------|---------|--------|
+| 开源项目 | v2.0.0 | AGPL-3.0 |
+| 个人学习研究 | v2.0.0 | AGPL-3.0 |
+| 商业闭源产品 | v1.2.4 或购买商业许可 | MIT / Commercial |
+| 内部工具（不开源） | v1.2.4 或购买商业许可 | MIT / Commercial |
+
+**如果不确定：** 请联系 kayou@duck.com 获取许可证咨询
+
+### ⚠️ 已知问题
+
+无新增已知问题，继承 v1.2.0 的已知问题列表。
+
+### 💡 贡献指南
+
+**贡献者许可协议（CLA）：**
+- 您拥有提交代码的完整版权
+- 您同意按照 AGPL-3.0 许可证发布
+- 您同意项目维护者有权用于商业许可授权
+
+详见：`docs/CONTRIBUTING.md`
+
+### 🔗 相关链接
+
+- [完整 API 文档](docs/PTrade_API_Implementation_Status.md)
+- [架构设计文档](docs/ARCHITECTURE.md)
+- [安装指南](docs/INSTALLATION.md)
+- [贡献指南](docs/CONTRIBUTING.md)
+- [商业许可咨询](mailto:kayou@duck.com)
+
+---
 
 ## [1.2.0] - 2025-11-30
 
@@ -102,11 +849,11 @@
 - **测试覆盖不全** - 由于时间限制，主要通过实际策略发现和修复问题
 - **内存占用较大** - 全量加载5000+股票需要8-12GB内存
 - **SimTradeData性能** - 数据获取项目存在性能问题，需要优化
-- **部分API未实现** - 还有99个PTrade API待实现
-  - 融资融券：19个API
-  - 期货交易：7个API
-  - 期权交易：15个API
-  - 实时交易：高级交易、盘后交易、IPO申购等
+- **部分API不在范围内** - 以下为实盘交易API，不适用于回测框架
+  - 融资融券：19个API（实盘交易）
+  - 期货交易：7个API（实盘交易）
+  - 期权交易：15个API（实盘交易）
+  - 实时交易：高级交易、盘后交易、IPO申购等（实盘交易）
 
 ### 💡 贡献指南
 

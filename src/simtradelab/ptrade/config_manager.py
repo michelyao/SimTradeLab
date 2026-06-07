@@ -1,4 +1,10 @@
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2025 Kay
+#
+# This file is part of SimTradeLab, dual-licensed under AGPL-3.0 and a
+# commercial license. See LICENSE-COMMERCIAL.md or contact kayou@duck.com
+#
 """
 PTrade统一配置管理器
 
@@ -6,8 +12,11 @@ PTrade统一配置管理器
 使用pydantic提供数据验证和类型安全
 """
 
-from typing import Dict, Any
-from pydantic import BaseModel, Field, field_validator
+
+from __future__ import annotations
+
+from typing import Any
+from pydantic import BaseModel, Field
 
 
 class TradingConfig(BaseModel):
@@ -17,13 +26,13 @@ class TradingConfig(BaseModel):
     """
     commission_ratio: float = Field(
         default=0.0003,
-        gt=0,
-        description="佣金费率，必须大于0"
+        ge=0,
+        description="佣金费率"
     )
     min_commission: float = Field(
         default=5.0,
-        gt=0,
-        description="最低佣金，必须大于0"
+        ge=0,
+        description="最低佣金"
     )
     slippage: float = Field(
         default=0.001,
@@ -48,6 +57,16 @@ class TradingConfig(BaseModel):
     commission_type: str = Field(
         default="STOCK",
         description="佣金类型"
+    )
+    transfer_fee_rate: float = Field(
+        default=0.0000487,
+        ge=0,
+        description="经手费率（万分之0.487，证监会规定）"
+    )
+    stamp_tax_rate: float = Field(
+        default=0.001,
+        ge=0,
+        description="印花税率（千分之一，卖出时收取）"
     )
 
     model_config = {"frozen": True}  # 配置不可变，确保线程安全
@@ -156,7 +175,20 @@ class ConfigurationManager:
         self.cache = CacheConfig()
         self.performance = PerformanceConfig()
 
-    def export_config(self) -> Dict[str, Any]:
+    def apply_market_defaults(self, profile) -> None:
+        """按市场配置初始化交易参数默认值
+
+        在策略 initialize() 之前调用，用户仍可通过 set_*() 覆盖
+        """
+        self.trading = TradingConfig(
+            commission_ratio=profile.commission_ratio,
+            min_commission=profile.min_commission,
+            stamp_tax_rate=profile.stamp_tax_rate,
+            transfer_fee_rate=profile.transfer_fee_rate,
+            slippage=profile.default_slippage,
+        )
+
+    def export_config(self) -> dict[str, Any]:
         """导出所有配置为字典
 
         使用pydantic的model_dump方法
@@ -167,7 +199,7 @@ class ConfigurationManager:
             'performance': self.performance.model_dump(),
         }
 
-    def load_config(self, config_dict: Dict[str, Any]) -> None:
+    def load_config(self, config_dict: dict[str, Any]) -> None:
         """从字典加载配置
 
         使用pydantic的model_validate方法

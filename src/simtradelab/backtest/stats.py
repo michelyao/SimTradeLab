@@ -1,15 +1,24 @@
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2025 Kay
+#
+# This file is part of SimTradeLab, dual-licensed under AGPL-3.0 and a
+# commercial license. See LICENSE-COMMERCIAL.md or contact kayou@duck.com
+#
 """
 回测统计分析模块
 
 包含收益率、风险指标、交易统计等计算函数，以及图表生成函数
 """
 
+
 import os
 import json
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
+from simtradelab.utils.plot import save_figure
+from simtradelab.i18n import t
+from simtradelab.utils.perf import timer
+from simtradelab.backtest.backtest_stats import BacktestStats
 
 
 def _load_index_names():
@@ -26,28 +35,15 @@ def _load_index_names():
         return {}
 
 
-def _get_benchmark_name(benchmark_code, use_english=False):
+def _get_benchmark_name(benchmark_code):
     """获取基准名称
 
     Args:
         benchmark_code: 基准代码
-        use_english: 是否使用英文名称（用于图表显示）
 
     Returns:
         str: 基准名称，如果找不到则返回代码本身
     """
-    if use_english:
-        english_names = {
-            '000300.SS': 'CSI 300',
-            '000905.SZ': 'CSI 500',
-            '000001.SZ': 'SZE Component',
-            '399001.SZ': 'SZE Component',
-            '399006.SZ': 'ChiNext',
-            '399101.SZ': 'SME Board',
-            '000001.SS': 'SSE Composite'
-        }
-        return english_names.get(benchmark_code, benchmark_code)
-
     index_names = _load_index_names()
     return index_names.get(benchmark_code, benchmark_code)
 
@@ -116,8 +112,14 @@ def calculate_risk_metrics(daily_returns, portfolio_values):
     # 波动率（年化）
     volatility = np.std(daily_returns) * np.sqrt(252) if len(daily_returns) > 0 else 0
 
+    # Sortino比率（仅用负收益标准差）
+    downside = daily_returns[daily_returns < 0]
+    downside_std = np.std(downside) * np.sqrt(252) if len(downside) > 0 else 0
+    sortino_ratio = (np.mean(daily_returns) * 252) / downside_std if downside_std > 0 else 0
+
     return {
         'sharpe_ratio': sharpe_ratio,
+        'sortino_ratio': sortino_ratio,
         'max_drawdown': max_drawdown,
         'volatility': volatility,
         'drawdown': drawdown
@@ -224,11 +226,11 @@ def calculate_trade_stats(daily_returns):
     }
 
 
-def generate_backtest_report(backtest_stats, start_date, end_date, benchmark_df, benchmark_code='000300.SS'):
+def generate_backtest_report(backtest_stats: BacktestStats, start_date, end_date, benchmark_df, benchmark_code='000300.SS'):
     """生成完整的回测报告
 
     Args:
-        backtest_stats: 回测统计数据字典
+        backtest_stats: 回测统计数据
         start_date: 回测开始日期
         end_date: 回测结束日期
         benchmark_df: 基准数据DataFrame
@@ -238,7 +240,7 @@ def generate_backtest_report(backtest_stats, start_date, end_date, benchmark_df,
     Returns:
         dict: 完整的回测报告指标
     """
-    portfolio_values = np.array(backtest_stats['portfolio_values'])
+    portfolio_values = np.array(backtest_stats.portfolio_values)
 
     # 基本收益指标
     returns_metrics = calculate_returns(portfolio_values)
@@ -273,6 +275,12 @@ def generate_backtest_report(backtest_stats, start_date, end_date, benchmark_df,
         excess_return = 0
         benchmark_metrics = {'alpha': 0, 'beta': 0, 'information_ratio': 0, 'tracking_error': 0}
 
+    # Calmar比率（年化收益 / 最大回撤绝对值）
+    calmar_ratio = (
+        returns_metrics['annual_return'] / abs(risk_metrics['max_drawdown'])
+        if risk_metrics['max_drawdown'] != 0 else 0
+    )
+
     # 交易统计
     trade_stats = calculate_trade_stats(returns_metrics['daily_returns'])
 
@@ -283,6 +291,7 @@ def generate_backtest_report(backtest_stats, start_date, end_date, benchmark_df,
     report = {
         **returns_metrics,
         **risk_metrics,
+        'calmar_ratio': calmar_ratio,
         'benchmark_code': benchmark_code,
         'benchmark_name': benchmark_name,
         'benchmark_return': benchmark_return,
@@ -295,21 +304,21 @@ def generate_backtest_report(backtest_stats, start_date, end_date, benchmark_df,
     return report
 
 
-def _validate_chart_data(backtest_stats):
+def _validate_chart_data(backtest_stats: BacktestStats):
     """验证并对齐图表数据
 
     Args:
-        backtest_stats: 回测统计数据字典
+        backtest_stats: 回测统计数据
 
     Returns:
         tuple: (dates, portfolio_values, daily_pnl, daily_buy, daily_sell, daily_positions_val)
     """
-    dates = np.array(backtest_stats['trade_dates'])
-    portfolio_values = np.array(backtest_stats['portfolio_values'])
-    daily_pnl = np.array(backtest_stats['daily_pnl'])
-    daily_buy = np.array(backtest_stats['daily_buy_amount'])
-    daily_sell = np.array(backtest_stats['daily_sell_amount'])
-    daily_positions_val = np.array(backtest_stats['daily_positions_value'])
+    dates = np.array(backtest_stats.trade_dates)
+    portfolio_values = np.array(backtest_stats.portfolio_values)
+    daily_pnl = np.array(backtest_stats.daily_pnl)
+    daily_buy = np.array(backtest_stats.daily_buy_amount)
+    daily_sell = np.array(backtest_stats.daily_sell_amount)
+    daily_positions_val = np.array(backtest_stats.daily_positions_value)
 
     # 数据验证：确保所有数组长度一致，空数组填充为0
     expected_len = len(dates)
@@ -342,10 +351,10 @@ def _plot_nav_curve(ax, dates, portfolio_values, daily_buy, daily_sell, benchmar
     """
     # 策略净值曲线
     strategy_nav = portfolio_values / portfolio_values[0]
-    ax.plot(dates, strategy_nav, linewidth=2, label='Strategy NAV', color='#1f77b4')
+    ax.plot(dates, strategy_nav, linewidth=2, label='策略净值', color='#1f77b4')
 
     # 基准净值曲线
-    benchmark_name = _get_benchmark_name(benchmark_code, use_english=True)
+    benchmark_name = _get_benchmark_name(benchmark_code)
     if benchmark_code in benchmark_data and not benchmark_data[benchmark_code].empty:
         benchmark_df_data = benchmark_data[benchmark_code]
         benchmark_slice = benchmark_df_data.loc[
@@ -360,14 +369,14 @@ def _plot_nav_curve(ax, dates, portfolio_values, daily_buy, daily_sell, benchmar
     # 标注买卖点
     buy_dates = dates[daily_buy > 0]
     buy_navs = strategy_nav[daily_buy > 0]
-    ax.scatter(buy_dates, buy_navs, marker='^', color='red', s=50, label='Buy', zorder=5)
+    ax.scatter(buy_dates, buy_navs, marker='^', color='red', s=50, label='买入', zorder=5)
 
     sell_dates = dates[daily_sell > 0]
     sell_navs = strategy_nav[daily_sell > 0]
-    ax.scatter(sell_dates, sell_navs, marker='v', color='green', s=50, label='Sell', zorder=5)
+    ax.scatter(sell_dates, sell_navs, marker='v', color='green', s=50, label='卖出', zorder=5)
 
-    ax.set_title('Portfolio Value vs Benchmark', fontsize=14, fontweight='bold')
-    ax.set_ylabel('Net Asset Value', fontsize=12)
+    ax.set_title('策略净值 vs 基准', fontsize=14, fontweight='bold')
+    ax.set_ylabel('净值', fontsize=12)
     ax.legend(loc='best', fontsize=10)
     ax.grid(True, alpha=0.3)
 
@@ -380,11 +389,11 @@ def _plot_daily_pnl(ax, dates, daily_pnl):
         dates: 日期数组
         daily_pnl: 每日盈亏数组
     """
-    colors = ['red' if pnl >= 0 else 'green' for pnl in daily_pnl]
-    ax.bar(dates, daily_pnl, color=colors, alpha=0.7, width=0.8)
-    ax.axhline(y=0, color='black', linestyle='-', linewidth=1)
-    ax.set_title('Daily P&L', fontsize=14, fontweight='bold')
-    ax.set_ylabel('P&L (CNY)', fontsize=12)
+    ax.fill_between(dates, daily_pnl, 0, where=daily_pnl >= 0, color='red', alpha=0.7)
+    ax.fill_between(dates, daily_pnl, 0, where=daily_pnl < 0, color='green', alpha=0.7)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+    ax.set_title('每日盈亏', fontsize=14, fontweight='bold')
+    ax.set_ylabel('盈亏（元）', fontsize=12)
     ax.grid(True, alpha=0.3, axis='y')
 
 
@@ -397,12 +406,11 @@ def _plot_trade_amounts(ax, dates, daily_buy, daily_sell):
         daily_buy: 每日买入金额
         daily_sell: 每日卖出金额
     """
-    width = 0.4
-    ax.bar(dates, daily_buy, color='red', alpha=0.7, width=width, label='Buy Amount')
-    ax.bar(dates, -daily_sell, color='green', alpha=0.7, width=width, label='Sell Amount')
-    ax.axhline(y=0, color='black', linestyle='-', linewidth=1)
-    ax.set_title('Daily Buy/Sell Amount', fontsize=14, fontweight='bold')
-    ax.set_ylabel('Amount (CNY)', fontsize=12)
+    ax.fill_between(dates, daily_buy, 0, color='red', alpha=0.7, label='买入金额')
+    ax.fill_between(dates, -daily_sell, 0, color='green', alpha=0.7, label='卖出金额')
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+    ax.set_title('每日买卖金额', fontsize=14, fontweight='bold')
+    ax.set_ylabel('金额（元）', fontsize=12)
     ax.legend(loc='best', fontsize=10)
     ax.grid(True, alpha=0.3, axis='y')
 
@@ -416,19 +424,20 @@ def _plot_positions_value(ax, dates, daily_positions_val):
         daily_positions_val: 每日持仓市值数组
     """
     ax.fill_between(dates, daily_positions_val, alpha=0.3, color='#9467bd')
-    ax.plot(dates, daily_positions_val, linewidth=2, color='#9467bd', label='Positions Value')
-    ax.set_title('Daily Positions Value', fontsize=14, fontweight='bold')
-    ax.set_xlabel('Date', fontsize=12)
-    ax.set_ylabel('Value (CNY)', fontsize=12)
+    ax.plot(dates, daily_positions_val, linewidth=2, color='#9467bd', label='持仓市值')
+    ax.set_title('每日持仓市值', fontsize=14, fontweight='bold')
+    ax.set_xlabel('日期', fontsize=12)
+    ax.set_ylabel('市值（元）', fontsize=12)
     ax.legend(loc='best', fontsize=10)
     ax.grid(True, alpha=0.3)
 
 
-def generate_backtest_charts(backtest_stats, start_date, end_date, benchmark_data, chart_filename, benchmark_code='000300.SS'):
+@timer(name="perf.name.chart")
+def generate_backtest_charts(backtest_stats: BacktestStats, start_date, end_date, benchmark_data, chart_filename, benchmark_code='000300.SS'):
     """生成回测图表
 
     Args:
-        backtest_stats: 回测统计数据字典
+        backtest_stats: 回测统计数据
         start_date: 回测开始日期
         end_date: 回测结束日期
         benchmark_data: 基准数据字典
@@ -438,15 +447,18 @@ def generate_backtest_charts(backtest_stats, start_date, end_date, benchmark_dat
     Returns:
         str: 图表文件路径
     """
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+
     # 设置字体 - 使用系统可用字体
-    plt.rcParams['font.sans-serif'] = ['Ubuntu', 'DejaVu Sans']
+    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'WenQuanYi Micro Hei', 'PingFang SC', 'Hiragino Sans GB', 'Ubuntu', 'DejaVu Sans']
     plt.rcParams['axes.unicode_minus'] = False
 
     # 验证并提取数据
     dates, portfolio_values, daily_pnl, daily_buy, daily_sell, daily_positions_val = _validate_chart_data(backtest_stats)
 
     # 创建图表 - 4行1列布局
-    fig, axes = plt.subplots(4, 1, figsize=(16, 20), sharex=True)
+    _, axes = plt.subplots(4, 1, figsize=(16, 20), sharex=True)
 
     # 绘制4个子图
     _plot_nav_curve(axes[0], dates, portfolio_values, daily_buy, daily_sell, benchmark_data, start_date, end_date, benchmark_code)
@@ -454,22 +466,31 @@ def generate_backtest_charts(backtest_stats, start_date, end_date, benchmark_dat
     _plot_trade_amounts(axes[2], dates, daily_buy, daily_sell)
     _plot_positions_value(axes[3], dates, daily_positions_val)
 
-    # 设置x轴日期格式
-    for ax in axes:
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator())
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
+    # 根据回测时长自动选择x轴刻度
+    total_days = (dates[-1] - dates[0]).days if len(dates) > 1 else 0
+    if total_days > 365 * 4:
+        major_locator = mdates.YearLocator()
+        major_fmt = mdates.DateFormatter('%Y')
+    elif total_days > 365:
+        major_locator = mdates.MonthLocator(interval=3)
+        major_fmt = mdates.DateFormatter('%Y-%m')
+    else:
+        major_locator = mdates.MonthLocator()
+        major_fmt = mdates.DateFormatter('%Y-%m')
 
-    # 调整布局
-    plt.tight_layout()
+    for ax in axes:
+        ax.xaxis.set_major_formatter(major_fmt)
+        ax.xaxis.set_major_locator(major_locator)
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
 
     # 自动创建目录
     chart_dir = os.path.dirname(chart_filename)
     os.makedirs(chart_dir, exist_ok=True)
 
-    # 保存图表
-    plt.savefig(chart_filename, dpi=150, bbox_inches='tight')
-    plt.close()
+    # tight_layout 解析式布局（比 bbox_inches='tight' 的双重渲染快）
+    fig = plt.gcf()
+    fig.tight_layout()
+    save_figure(fig, chart_filename, dpi=100)
 
     return chart_filename
 
@@ -482,36 +503,54 @@ def print_backtest_report(report, log, start_date, end_date, time_str, positions
         log: 日志对象
         start_date: 回测开始日期
         end_date: 回测结束日期
-        time_str: 格式化后的耗时字符串（如：3分32秒）
+        time_str: 格式化后的耗时字符串
         positions_count: 持仓数量数组
     """
     log.info("")
     log.info("=" * 70)
-    log.info(f"回测报告 {start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')} | "
-             f"周期: {report['trading_days']}天 | 耗时: {time_str}")
+    log.info(t("report.header",
+               start=start_date.strftime('%Y%m%d'),
+               end=end_date.strftime('%Y%m%d'),
+               days=report['trading_days'],
+               time=time_str))
     log.info("=" * 70)
 
     # 核心指标
     log.info("")
-    log.info(f"总收益率: {report['total_return']*100:+.2f}%  |  "
-             f"年化收益: {report['annual_return']*100:+.2f}%  |  "
-             f"最大回撤: {report['max_drawdown']*100:.2f}%")
-    log.info(f"夏普比率: {report['sharpe_ratio']:.3f}  |  "
-             f"信息比率: {report['information_ratio']:.3f}  |  "
-             f"本金: {report['initial_value']/10000:.0f}万 → {report['final_value']/10000:.1f}万")
+    log.info(t("report.returns",
+               total="{:+.2f}".format(report['total_return'] * 100),
+               annual="{:+.2f}".format(report['annual_return'] * 100),
+               drawdown="{:.2f}".format(report['max_drawdown'] * 100)))
+    log.info(t("report.ratios",
+               sharpe="{:.3f}".format(report['sharpe_ratio']),
+               info="{:.3f}".format(report['information_ratio']),
+               start_wan="{:.0f}".format(report['initial_value'] / 10000),
+               end_wan="{:.1f}".format(report['final_value'] / 10000),
+               start_val="{:,.0f}".format(report['initial_value']),
+               end_val="{:,.0f}".format(report['final_value'])))
+    log.info(t("report.ratios2",
+               sortino="{:.3f}".format(report['sortino_ratio']),
+               calmar="{:.3f}".format(report['calmar_ratio'])))
 
     # 基准对比
     log.info("")
     benchmark_name = report.get('benchmark_name', 'Benchmark')
-    log.info(f"vs {benchmark_name}: 超额收益 {report['excess_return']*100:+.2f}% | "
-             f"Alpha {report['alpha']*100:+.2f}% | Beta {report['beta']:.3f}")
+    log.info(t("report.benchmark",
+               name=benchmark_name,
+               excess="{:+.2f}".format(report['excess_return'] * 100),
+               alpha="{:+.2f}".format(report['alpha'] * 100),
+               beta="{:.3f}".format(report['beta'])))
 
     # 交易统计
     avg_pos = np.mean(positions_count) if len(positions_count) > 0 else 0
     max_pos = np.max(positions_count) if len(positions_count) > 0 else 0
     log.info("")
-    log.info(f"盈利天数: {report['win_count']}/{report['trading_days']}天 ({report['win_rate']*100:.1f}%) | "
-             f"盈亏比: {report['profit_loss_ratio']:.2f} | "
-             f"持仓: {avg_pos:.1f}只(最大{max_pos}只)")
+    log.info(t("report.win_stats",
+               wins=report['win_count'],
+               total=report['trading_days'],
+               rate="{:.1f}".format(report['win_rate'] * 100),
+               plr="{:.2f}".format(report['profit_loss_ratio']),
+               avg="{:.1f}".format(avg_pos),
+               max=max_pos))
 
     log.info("=" * 70)
